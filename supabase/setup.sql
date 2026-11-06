@@ -59,10 +59,19 @@ create policy "Owners add editors" on public.trip_editors for insert to authenti
 create policy "Owners remove editors" on public.trip_editors for delete to authenticated
   using (public.owns_trip(trip_id));
 
--- Family view-only link: anyone holding the token can read that one trip.
+-- Family view-only link: anyone holding the token can read that one trip,
+-- minus what family doesn't need. Booking confirmation numbers, links and
+-- notes, to-dos, the travel profile and the wishlist are removed here, so
+-- they never leave the database.
 create or replace function public.get_shared_trip(token text) returns jsonb
 language sql stable security definer set search_path = public as $$
-  select data from trips where token is not null and share_token = token;
+  select (data - 'todos' - 'todoState' - 'profile' - 'wishlist')
+    || jsonb_build_object('bookings', coalesce((
+         select jsonb_agg(b - 'confirmation' - 'link' - 'notes')
+         from jsonb_array_elements(coalesce(data -> 'bookings', '[]'::jsonb)) as b
+       ), '[]'::jsonb))
+  from trips
+  where token is not null and share_token = token;
 $$;
 
 -- Owner makes a new link (the old one stops working) or turns it off.
@@ -84,3 +93,5 @@ $$;
 revoke execute on function public.new_share_link(uuid), public.stop_share_link(uuid) from public, anon;
 grant execute on function public.new_share_link(uuid), public.stop_share_link(uuid) to authenticated;
 grant execute on function public.get_shared_trip(text) to anon, authenticated;
+revoke execute on function public.owns_trip(uuid), public.is_trip_editor(uuid) from public, anon;
+grant execute on function public.owns_trip(uuid), public.is_trip_editor(uuid) to authenticated;

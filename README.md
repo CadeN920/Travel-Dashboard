@@ -32,10 +32,19 @@ With a free [Supabase](https://supabase.com) project, the app adds:
 Setup:
 1. Create a Supabase project.
 2. In **SQL Editor**, run [`supabase/setup.sql`](supabase/setup.sql).
-3. Under **Authentication → URL Configuration**, set **Site URL** to the site's address so email confirmation links come back to the app.
+3. Under **Authentication → Sign In / Providers → Email**, keep **Confirm email** on and set the minimum password length to 8. Under **Authentication → URL Configuration**, set **Site URL** to the site's address so email confirmation links come back to the app.
 4. Put the project's URL and anon (publishable) key in [`config.js`](config.js).
 
 The anon key is designed to be public: the database's row-level security only lets each account read the trips it owns or was added to, and the family link only reveals the one trip it belongs to. Without `config.js` values, the app works on a single device as before.
+
+## Privacy & security
+- **Your trip is private by default.** Database row-level security lets an account read and edit only trips it owns or was added to; partners can edit but can't take ownership, invite others, delete the trip or touch the family link.
+- **The family link never carries sensitive details.** The database strips booking confirmation numbers, booking links and booking notes, plus to-dos, the travel profile and the wishlist, before anything is sent. Links are 256-bit random and can be reset or turned off.
+- **Locked-down page:** a Content-Security-Policy limits where code can load from and which services the app can talk to; the CDN libraries are pinned with Subresource Integrity hashes; no referrer is ever sent, so the family link's secret can't leak through outgoing links.
+- **Untrusted data is cleaned** on load (imports, sync, family link) so tampered values can't inject markup, and all text is escaped before display.
+- **No secrets in this repo.** The Supabase publishable key is designed to be public; access is enforced by the database rules in `supabase/setup.sql`.
+
+Existing projects created before the family-link filtering should run [`supabase/privacy-update.sql`](supabase/privacy-update.sql) once in the Supabase SQL Editor.
 
 ## Run it
 Open `index.html` in a browser, or serve the folder:

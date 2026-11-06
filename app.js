@@ -79,15 +79,47 @@ function defaultState() {
   };
 }
 
-// Fill in fields that older saves or imports may be missing.
+// Fill in fields that older saves or imports may be missing, and coerce
+// every field that ends up in page markup to the kind of value it should
+// hold. Trips can arrive from an import file or another account, so a
+// tampered value must never be able to inject markup or script.
+const CONTINENTS = ['Europe', 'Africa', 'Asia'];
+const STOP_STATUSES = ['booked', 'tentative', 'idea'];
+const BOOKING_TYPE_IDS = ['flight', 'train', 'bus', 'ferry', 'stay', 'activity'];
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+const str = (v) => (v == null ? '' : String(v));
 function migrate(data) {
-  data.trip.home ??= null;
-  data.stops.forEach((s) => { s.status ??= 'booked'; });
-  data.bookings ??= [];
+  data.trip ??= {};
+  data.trip.name = str(data.trip.name) || 'My Trip';
+  const isDay = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(parseDate(d).getTime());
+  if (!isDay(data.trip.start)) data.trip.start = toISO(today());
+  if (!isDay(data.trip.end) || data.trip.end < data.trip.start) data.trip.end = toISO(addDays(parseDate(data.trip.start), 137));
+  data.trip.home = data.trip.home
+    ? { name: str(data.trip.home.name), lat: num(data.trip.home.lat), lng: num(data.trip.home.lng) }
+    : null;
+  data.stops = Array.isArray(data.stops) ? data.stops : [];
+  data.stops.forEach((s) => {
+    s.id = str(s.id) || uid();
+    s.status = STOP_STATUSES.includes(s.status) ? s.status : 'booked';
+    s.continent = CONTINENTS.includes(s.continent) ? s.continent : 'Europe';
+    s.lat = num(s.lat);
+    s.lng = num(s.lng);
+    s.rating = Math.max(0, Math.min(5, Math.round(num(s.rating))));
+    ['name', 'country', 'notes', 'photo', 'transport', 'leg', 'arrive', 'depart'].forEach((k) => { s[k] = str(s[k]); });
+  });
+  data.bookings = Array.isArray(data.bookings) ? data.bookings : [];
+  data.bookings.forEach((b) => {
+    b.id = str(b.id) || uid();
+    if (!BOOKING_TYPE_IDS.includes(b.type)) b.type = 'activity';
+  });
+  data.wishlist = Array.isArray(data.wishlist) ? data.wishlist : [];
+  data.wishlist.forEach((w) => {
+    w.lat = w.lat == null ? null : num(w.lat);
+    w.lng = w.lng == null ? null : num(w.lng);
+  });
   data.todos ??= [];        // your own tasks
   data.todoState ??= {};    // suggested reminders you've ticked off or dismissed
   data.profile ??= {};      // travel-preferences quiz answers
-  data.wishlist ??= [];     // places saved from Discover
   return data;
 }
 
@@ -143,15 +175,21 @@ function stopStatus(stop) {
 // minZoom 2 keeps the world from repeating side by side.
 const map = L.map('map', { worldCopyJump: true, minZoom: 2 }).setView([40, 50], 3);
 // Esri street tiles need no API key. If they fail to load, fall back to OpenStreetMap.
-const esriTiles = L.tileLayer(
-  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
-  { attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors', maxZoom: 18 }
-).addTo(map);
+// A quiet gray basemap (light or dark to match the device) so the colored
+// route and pins stand out; place names come from a separate label layer.
+const canvas = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'Dark' : 'Light';
+const esriUrl = (layer) => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_${canvas}_Gray_${layer}/MapServer/tile/{z}/{y}/{x}`;
+const esriTiles = L.tileLayer(esriUrl('Base'), {
+  attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
+  maxNativeZoom: 16, maxZoom: 18,
+}).addTo(map);
+const esriLabels = L.tileLayer(esriUrl('Reference'), { maxNativeZoom: 16, maxZoom: 18 }).addTo(map);
 
 let tileErrors = 0;
 esriTiles.on('tileerror', () => {
   if (++tileErrors !== 5) return;
   map.removeLayer(esriTiles);
+  map.removeLayer(esriLabels);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors',
     maxZoom: 18,
@@ -293,14 +331,54 @@ function renderHeader() {
 
   const total = daysBetween(start, end);
   const elapsed = daysBetween(start, toISO(today()));
-  const done = Math.min(Math.max(elapsed, 0), total);
-  const pct = total > 0 ? (done / total) * 100 : 0;
-  $('#progress-bar').style.width = pct + '%';
   const plural = (n) => `${n} day${n === 1 ? '' : 's'}`;
-  $('#progress-label').textContent =
-    elapsed < 0 ? `Trip starts in ${plural(-elapsed)}`
-    : elapsed >= total ? 'Trip complete — welcome home! 🎉'
-    : `Day ${elapsed + 1} of ${total} · ${plural(total - elapsed - 1)} to go`;
+  // Under the timeline: a color key for the regions on this trip, plus days left once you're traveling.
+  const regions = CONTINENTS.filter((c) => sortedStops().some((s) => s.continent === c));
+  const left = elapsed >= 0 && elapsed < total ? `<span>${plural(total - elapsed - 1)} to go</span>` : '';
+  $('#progress-label').innerHTML = regions.map((c) => `<span class="key ${c}">${c}</span>`).join('') + left;
+
+  // Big countdown on the right of the header.
+  const [num, label] = elapsed < 0 ? [-elapsed, elapsed === -1 ? 'day to go' : 'days to go']
+    : elapsed >= total ? ['🎉', 'trip complete']
+    : [`Day ${elapsed + 1}`, `of ${total}`];
+  $('#countdown-num').textContent = num;
+  $('#countdown-label').textContent = label;
+  const now = sortedStops().find((s) => stopStatus(s) === 'current');
+  const next = sortedStops().find((s) => stopStatus(s) === 'upcoming');
+  $('#hero-eyebrow').innerHTML = now ? `Now in ${flagFor(now)}${escapeHTML(now.name)}`
+    : next ? `First stop · ${flagFor(next)}${escapeHTML(next.name)}` : 'Your trip';
+  renderTimeline();
+}
+
+// The whole trip as one bar: a colored segment per stop (by region), month
+// markers underneath, and a line for today.
+function renderTimeline() {
+  const { start, end } = state.trip;
+  const total = Math.max(1, daysBetween(start, end));
+  const pos = (day) => Math.min(100, Math.max(0, (daysBetween(start, day) / total) * 100));
+  const t = toISO(today());
+  const segments = sortedStops().map((s) => {
+    const left = pos(s.arrive);
+    const width = Math.max(0.6, pos(s.depart) - left);
+    const cls = [s.continent, s.depart <= t && 'past', stopStatus(s) === 'current' && 'current'].filter(Boolean).join(' ');
+    return `<span class="seg ${cls}" style="left:${left}%;width:${width}%"
+      title="${escapeHTML(s.name)} · ${fmtDate(s.arrive)} – ${fmtDate(s.depart)}"></span>`;
+  }).join('');
+  const todayLine = t >= start && t <= end ? `<span class="today" style="left:${pos(t)}%"></span>` : '';
+  const ticks = [];
+  let [y, m] = start.split('-').map(Number);
+  for (;;) {
+    const first = `${y}-${String(m).padStart(2, '0')}-01`;
+    if (first > end) break;
+    const month = parseDate(first).toLocaleDateString(undefined, { month: 'short' });
+    if (first >= start) ticks.push(`<span class="tick" style="left:${pos(first)}%">${month}</span>`);
+    // Label the month the trip starts in, unless the next month's label would sit right on top of it.
+    else if (pos(`${m === 12 ? y + 1 : y}-${String(m === 12 ? 1 : m + 1).padStart(2, '0')}-01`) > 8) {
+      ticks.push(`<span class="tick start" style="left:0">${month}</span>`);
+    }
+    [y, m] = m === 12 ? [y + 1, 1] : [y, m + 1];
+  }
+  $('#trip-timeline').innerHTML = `<div class="track">${segments}${todayLine}</div><div class="ticks">${ticks.join('')}</div>`;
 }
 
 function routeKm(stops) {
@@ -520,8 +598,8 @@ function bookingItem(b) {
           <button type="button" class="copy">Copy</button>` : ''}
       </div>` : ''}
       ${b.details ? `<div class="notes">${escapeHTML(b.details)}</div>` : ''}
-      ${b.address ? `<div class="notes"><a href="${mapsUrl}" target="_blank" rel="noopener">📍 ${escapeHTML(b.address)}</a></div>` : ''}
-      ${link ? `<div class="notes"><a href="${escapeHTML(link)}" target="_blank" rel="noopener">Open booking ↗</a></div>` : ''}
+      ${b.address ? `<div class="notes"><a href="${mapsUrl}" target="_blank" rel="noopener noreferrer">📍 ${escapeHTML(b.address)}</a></div>` : ''}
+      ${link ? `<div class="notes"><a href="${escapeHTML(link)}" target="_blank" rel="noopener noreferrer">Open booking ↗</a></div>` : ''}
       ${b.notes ? `<div class="notes">${escapeHTML(b.notes)}</div>` : ''}
       ${stop ? `<div class="meta">For: ${escapeHTML(stop.name)}</div>` : ''}
     </div>`;
@@ -1127,7 +1205,7 @@ function renderDiscover() {
       <input type="checkbox" ${w.done ? 'checked' : ''} aria-label="Done" />
       <div class="task-body">
         <div class="task-text">${escapeHTML(w.name)}</div>
-        <div class="task-meta">${TYPE_LABEL[w.type] ?? ''} · <a href="${mapsLink(w, w.place || stop.name)}" target="_blank" rel="noopener">Map</a></div>
+        <div class="task-meta">${TYPE_LABEL[w.type] ?? ''} · <a href="${mapsLink(w, w.place || stop.name)}" target="_blank" rel="noopener noreferrer">Map</a></div>
       </div>
       <button type="button" class="task-x" title="Remove">×</button>`;
     li.querySelector('input').addEventListener('change', (e) => {
@@ -1181,8 +1259,8 @@ function renderDiscover() {
       </div>
       <div class="rec-actions">
         <button type="button" class="star${saved ? ' on' : ''}">${saved ? '★ Saved' : '☆ Save'}</button>
-        <a class="button ghost small" href="${mapsLink(l, discover.place)}" target="_blank" rel="noopener">Map</a>
-        ${l.url ? `<a class="button ghost small" href="${escapeHTML(l.url)}" target="_blank" rel="noopener">Website</a>` : ''}
+        <a class="button ghost small" href="${mapsLink(l, discover.place)}" target="_blank" rel="noopener noreferrer">Map</a>
+        ${l.url ? `<a class="button ghost small" href="${escapeHTML(l.url)}" target="_blank" rel="noopener noreferrer">Website</a>` : ''}
       </div>`;
     li.querySelector('.star').addEventListener('click', () => toggleSaved(l));
     list.appendChild(li);
@@ -1887,7 +1965,7 @@ async function signIn(create) {
   const email = authForm.elements.email.value.trim();
   const password = authForm.elements.password.value;
   if (!email || !password) return showError('#auth-error', 'Enter your email and a password.');
-  if (create && password.length < 6) return showError('#auth-error', 'Use a password of at least 6 characters.');
+  if (create && password.length < 8) return showError('#auth-error', 'Use a password of at least 8 characters.');
   showError('#auth-error', '');
   try {
     const { data, error } = create
