@@ -123,10 +123,102 @@ function migrate(data) {
   return data;
 }
 
+// ---------- end-to-end encryption (optional) ----------
+//
+// With encryption on, the trip is sealed on this device with AES-256-GCM,
+// using a key derived from a passphrase (PBKDF2-SHA256, 600k rounds), before
+// it is stored in this browser or uploaded. Supabase only ever holds the
+// sealed box. The passphrase never leaves the device; if it's forgotten the
+// trip can't be recovered by anyone.
+//
+// The family link gets its own sealed snapshot (sensitive fields removed)
+// under a separate random key that only exists in the link's #fragment,
+// which browsers never send to a server.
+
+const KDF_ROUNDS = 600000;
+const vault = {
+  salt: null,  // set when encryption is on (Uint8Array)
+  iter: KDF_ROUNDS,
+  key: null,   // CryptoKey while unlocked
+  box: null,   // a sealed trip waiting to be unlocked
+};
+const isSealed = (d) => !!d && typeof d === 'object' && d.enc === 1 && typeof d.ct === 'string';
+const encryptionOn = () => !!vault.salt;
+const isLocked = () => encryptionOn() && !vault.key;
+
+function toB64(buf) {
+  const bytes = new Uint8Array(buf);
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+const fromB64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+const toB64url = (buf) => toB64(buf).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const fromB64url = (s) => fromB64(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4));
+
+async function deriveKey(passphrase, salt, iterations) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'],
+  );
+}
+async function sealWith(key, obj, extra = {}) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(obj)));
+  return { enc: 1, v: 1, ...extra, iv: toB64(iv), ct: toB64(ct) };
+}
+async function openWith(key, box) {
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(box.iv) }, key, fromB64(box.ct));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+const sealTrip = (obj) => sealWith(vault.key, obj, { kdf: 'PBKDF2-SHA256', iter: vault.iter, salt: toB64(vault.salt) });
+
+// The family link's snapshot: no booking codes, links or notes, no to-dos,
+// profile, wishlist or the snapshot key itself.
+function familySnapshot(s) {
+  const { todos, todoState, profile, wishlist, shareKey, ...rest } = s;
+  return { ...rest, bookings: (s.bookings || []).map(({ confirmation, link, notes, ...b }) => b) };
+}
+const newShareKey = () => toB64url(crypto.getRandomValues(new Uint8Array(32)));
+const shareCryptoKey = (k) => crypto.subtle.importKey('raw', fromB64url(k), 'AES-GCM', false, ['encrypt', 'decrypt']);
+
+// "Remember on this device": the unlocked key is kept in IndexedDB as a
+// non-extractable CryptoKey (its bytes can't be read back out, even by this app).
+function idb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('wanderlog', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('keys');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbDo(mode, fn) {
+  const db = await idb();
+  return new Promise((resolve, reject) => {
+    const req = fn(db.transaction('keys', mode).objectStore('keys'));
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+const rememberKey = (key, salt) => idbDo('readwrite', (s) => s.put({ key, salt: toB64(salt) }, 'trip-key')).catch(() => {});
+const forgetKey = () => idbDo('readwrite', (s) => s.delete('trip-key')).catch(() => {});
+const rememberedKey = () => idbDo('readonly', (s) => s.get('trip-key')).catch(() => null);
+
 function load() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return migrate(JSON.parse(raw));
+    if (raw) {
+      const data = JSON.parse(raw);
+      // An encrypted trip stays sealed until it's unlocked (see unlockWith).
+      if (isSealed(data)) {
+        vault.salt = fromB64(data.salt);
+        vault.iter = data.iter;
+        vault.box = data;
+        return defaultState();
+      }
+      return migrate(data);
+    }
   } catch (e) {
     console.warn('Could not read saved data', e);
   }
@@ -137,17 +229,22 @@ function load() {
 // writes this browser's saved trip.
 const viewToken = new URLSearchParams(location.search).get('view');
 const readOnly = !!viewToken;
+// An encrypted trip's family link carries its key after '#': ?view=…#k=…
+const shareKeyFromUrl = readOnly ? new URLSearchParams(location.hash.slice(1)).get('k') : null;
 
 let state = readOnly ? defaultState() : load();
 let filter = 'all';
 
+let localWrites = 0;
 function saveLocal() {
-  if (readOnly) return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch (e) {
-    console.warn('Could not save', e);
-  }
+  if (readOnly || isLocked()) return; // never overwrite a sealed trip with a placeholder
+  const seq = ++localWrites;
+  const write = (value) => {
+    if (seq !== localWrites) return; // a newer save already happened
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(value)); } catch (e) { console.warn('Could not save', e); }
+  };
+  if (vault.key) sealTrip(state).then(write).catch((e) => console.warn('Could not encrypt', e));
+  else write(state);
 }
 
 // Every edit goes through here: save on this device, then upload if signed in.
@@ -504,6 +601,7 @@ function render(fit = false) {
   renderTodos();
   renderHome();
   renderProfile();
+  renderCryptoStatus();
   if (!$('#view-discover').hidden) renderDiscover();
   renderMap(fit);
 }
@@ -650,10 +748,16 @@ function showView(name) {
 }
 // The URL hash remembers the tab (#trip, #todos, …) so back/forward and refresh work.
 function goTo(name) {
-  if (location.hash === `#${name}`) showView(name);
-  else location.hash = name;
+  const target = shareKeyFromUrl ? `v=${name}&k=${shareKeyFromUrl}` : name;
+  if (location.hash === `#${target}`) showView(name);
+  else location.hash = target;
 }
-window.addEventListener('hashchange', () => showView(location.hash.slice(1)));
+// On a family link the #fragment also holds its key, as "#v=trip&k=…".
+function hashView() {
+  const h = location.hash.slice(1);
+  return h.includes('=') ? new URLSearchParams(h).get('v') || 'home' : h;
+}
+window.addEventListener('hashchange', () => showView(hashView()));
 document.querySelectorAll('.nav-item').forEach((b) => b.addEventListener('click', () => goTo(b.dataset.view)));
 document.addEventListener('click', (e) => {
   const link = e.target.closest('[data-goto]');
@@ -1703,6 +1807,7 @@ $('#btn-demo').addEventListener('click', () => replaceTrip(sampleTrip(), 'the sa
 // ---------- export / import ----------
 
 $('#btn-export').addEventListener('click', () => {
+  if (encryptionOn() && !confirm('This backup file is NOT encrypted: anyone who opens it can read your trip. Keep it somewhere private. Download it?')) return;
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -1788,6 +1893,12 @@ const sb = cfg.supabaseUrl && cfg.supabaseAnonKey && window.supabase
   : null;
 
 let user = null;
+let turningOff = false; // the user chose to turn encryption off, so a readable upload may replace the encrypted copy
+let serverReady = false; // the database has the encryption update (share_data column)
+async function checkServer() {
+  const { data: version } = await sb.rpc('wanderlog_schema_version').catch(() => ({}));
+  serverReady = version >= 2;
+}
 let trip = null;         // { id, owner_id, share_token } of the cloud trip this device follows
 let busy = false;        // a sync is in flight
 let editVersion = 0;     // bumps on every local edit
@@ -1862,12 +1973,30 @@ async function fetchCloudTrip() {
 }
 
 async function uploadTrip() {
+  if (isLocked()) return; // nothing to upload until the trip is unlocked
   const version = editVersion;
   const row = { data: state, updated_at: new Date().toISOString() };
+  if (vault.key) {
+    row.data = await sealTrip(state);
+    row.share_data = state.shareKey
+      ? await sealWith(await shareCryptoKey(state.shareKey), familySnapshot(state))
+      : null;
+  } else if (serverReady) {
+    row.share_data = null; // the database filters the readable trip for the family link
+  }
   setSyncState('saving');
   const cols = 'id, owner_id, share_token';
   // After a reload only the trip's id is known, so fall back to the saved one.
   const id = trip?.id ?? storageGet(TRIP_ID_KEY);
+  // Safety: if the trip in the cloud is encrypted and this device isn't
+  // unlocked, never replace it with a readable copy.
+  if (!vault.key && id && !turningOff) {
+    const { data: current } = await sb.from('trips').select('enc:data->enc').eq('id', id).maybeSingle();
+    if (current?.enc) {
+      setPending(false); // the encrypted cloud copy wins; it opens once unlocked
+      return 'cloud-sealed';
+    }
+  }
   let result = id
     ? await sb.from('trips').update(row).eq('id', id).select(cols).single()
     : null;
@@ -1879,6 +2008,7 @@ async function uploadTrip() {
   if (error) throw error;
   rememberTrip(data);
   lastCloudUpdate = row.updated_at;
+  if (!vault.key) turningOff = false; // the readable copy is now in the cloud
   // Only clear the flag if nothing changed while we were uploading.
   if (version === editVersion) {
     setPending(false);
@@ -1896,7 +2026,9 @@ function queueUpload() {
   uploadTimer = setTimeout(async () => {
     if (busy) return queueUpload();
     busy = true;
-    try { await uploadTrip(); } catch (e) { syncFailed(e); } finally { busy = false; }
+    let result;
+    try { result = await uploadTrip(); } catch (e) { syncFailed(e); } finally { busy = false; }
+    if (result === 'cloud-sealed') reconcile(); // fetch and open (or ask to unlock) the encrypted copy
   }, 800);
 }
 
@@ -1907,7 +2039,7 @@ async function reconcile({ justSignedIn = false } = {}) {
   if (!user || busy) return;
   busy = true;
   try {
-    if (hasPending()) return await uploadTrip();
+    if (hasPending() && !isLocked() && (await uploadTrip()) !== 'cloud-sealed') return;
 
     const cloud = await fetchCloudTrip();
     if (!cloud) {
@@ -1920,14 +2052,16 @@ async function reconcile({ justSignedIn = false } = {}) {
     if (lastCloudUpdate && Date.parse(cloud.updated_at) === Date.parse(lastCloudUpdate)) {
       return setSyncState('synced');
     }
-    if (!sameTrip(cloud.data, state)) {
+    const cloudTrip = await openCloudTrip(cloud.data);
+    if (!cloudTrip) return setSyncState('synced'); // encrypted: waiting for the passphrase
+    if (!sameTrip(cloudTrip, state)) {
       const keepThisDevice = justSignedIn && state.stops.length && !confirm(
-        `Your account already has a trip ("${cloud.data.trip.name}", ${cloud.data.stops.length} stops).\n\n` +
+        `Your account already has a trip ("${cloudTrip.trip.name}", ${cloudTrip.stops.length} stops).\n\n` +
         `OK: show that trip on this device.\n` +
         `Cancel: replace it with the trip on this device ("${state.trip.name}", ${state.stops.length} stops).`
       );
       if (keepThisDevice) return await uploadTrip();
-      state = migrate(cloud.data);
+      state = migrate(cloudTrip);
       saveLocal();
       render(justSignedIn);
     }
@@ -1978,6 +2112,7 @@ async function signIn(create) {
     user = data.session.user;
     authForm.elements.password.value = '';
     authDialog.close();
+    await checkServer();
     await reconcile({ justSignedIn: true });
   } catch (e) {
     showError('#auth-error', "Couldn't reach the server. Check your connection and try again.");
@@ -1997,8 +2132,11 @@ $('#btn-signout').addEventListener('click', async () => {
   lastCloudUpdate = null;
   rememberTrip(null);
   setPending(false);
+  Object.assign(vault, { salt: null, key: null, box: null, iter: KDF_ROUNDS });
+  await forgetKey();
   state = defaultState();
   saveLocal();
+  closeLockScreen();
   authDialog.close();
   render(true);
   setSyncState('signed-out');
@@ -2007,7 +2145,8 @@ $('#btn-signout').addEventListener('click', async () => {
 // ---------- sharing ----------
 
 const shareDialog = $('#share-dialog');
-const shareUrl = (token) => `${location.origin}${location.pathname}?view=${token}`;
+const shareUrl = (token) => `${location.origin}${location.pathname}?view=${token}` +
+  (vault.key && state.shareKey ? `#k=${state.shareKey}` : '');
 
 async function renderShareDialog() {
   const isOwner = trip?.owner_id === user.id;
@@ -2073,6 +2212,12 @@ async function makeShareLink() {
   const { data, error } = await sb.rpc('new_share_link', { trip: trip.id });
   if (error) throw error;
   trip.share_token = data;
+  if (vault.key) {
+    // A fresh key too, so the old link can't read new snapshots.
+    state.shareKey = newShareKey();
+    saveLocal();
+    await uploadTrip();
+  }
 }
 $('#btn-make-link').addEventListener('click', () => shareAction(makeShareLink));
 $('#btn-reset-link').addEventListener('click', () => shareAction(async () => {
@@ -2083,6 +2228,10 @@ $('#btn-stop-link').addEventListener('click', () => shareAction(async () => {
   const { error } = await sb.rpc('stop_share_link', { trip: trip.id });
   if (error) throw error;
   trip.share_token = null;
+  if (state.shareKey) {
+    delete state.shareKey;
+    save();
+  }
 }));
 $('#btn-copy-link').addEventListener('click', async () => {
   try {
@@ -2094,6 +2243,196 @@ $('#btn-copy-link').addEventListener('click', async () => {
   }
   setTimeout(() => { $('#btn-copy-link').textContent = 'Copy'; }, 2000);
 });
+
+// ---------- encryption: unlock screen and settings ----------
+
+const lockDialog = $('#lock-dialog');
+const lockForm = $('#lock-form');
+lockDialog.addEventListener('cancel', (e) => e.preventDefault()); // Esc can't skip the lock
+
+function showLockScreen() {
+  document.body.classList.add('locked');
+  showError('#lock-error', '');
+  if (!lockDialog.open) lockDialog.showModal();
+  lockForm.elements.pass.focus();
+}
+function closeLockScreen() {
+  document.body.classList.remove('locked');
+  if (lockDialog.open) lockDialog.close();
+}
+
+// Open a trip from the cloud. Returns the readable trip, or null when it's
+// sealed with a passphrase this device doesn't have yet (then asks for it).
+async function openCloudTrip(data) {
+  if (!isSealed(data)) {
+    if (vault.key) { // encryption was turned off on another device
+      Object.assign(vault, { salt: null, key: null, box: null, iter: KDF_ROUNDS });
+      await forgetKey();
+    }
+    return data;
+  }
+  if (vault.key && toB64(vault.salt) === data.salt) {
+    try { return await openWith(vault.key, data); } catch { /* the passphrase changed elsewhere */ }
+  }
+  Object.assign(vault, { salt: fromB64(data.salt), iter: data.iter, key: null, box: data });
+  await forgetKey();
+  // Replace any readable copy on this device with the sealed one right away.
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch { /* storage full */ }
+  state = defaultState();
+  render(true);
+  showLockScreen();
+  return null;
+}
+
+async function unlockWith(key, remember) {
+  const box = vault.box;
+  const plain = await openWith(key, box); // throws if the passphrase is wrong
+  Object.assign(vault, { key, salt: fromB64(box.salt), iter: box.iter, box: null });
+  if (remember) await rememberKey(key, vault.salt);
+  state = migrate(plain);
+  saveLocal();
+  closeLockScreen();
+  render(true);
+  if (user) reconcile();
+}
+
+lockForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = lockForm.querySelector('[type=submit]');
+  btn.disabled = true;
+  btn.textContent = 'Unlocking…';
+  try {
+    const key = await deriveKey(lockForm.elements.pass.value, fromB64(vault.box.salt), vault.box.iter);
+    await unlockWith(key, lockForm.elements.remember.checked);
+    lockForm.elements.pass.value = '';
+  } catch {
+    showError('#lock-error', "That passphrase didn't unlock the trip. Check it and try again.");
+  }
+  btn.disabled = false;
+  btn.textContent = 'Unlock';
+});
+
+// Opening the app on a device that remembers the key: unlock silently.
+async function autoUnlock() {
+  const saved = await rememberedKey();
+  if (saved && saved.salt === vault.box.salt) {
+    try { return await unlockWith(saved.key, false); } catch { await forgetKey(); }
+  }
+  showLockScreen();
+}
+
+$('#btn-lock-reset').addEventListener('click', async () => {
+  if (!confirm('Remove the encrypted trip from this device? You can sign in again later, but without the passphrase the trip stays unreadable.')) return;
+  if (user) {
+    $('#btn-signout').click();
+  } else {
+    Object.assign(vault, { salt: null, key: null, box: null, iter: KDF_ROUNDS });
+    await forgetKey();
+    state = defaultState();
+    saveLocal();
+    closeLockScreen();
+    render(true);
+  }
+});
+
+async function lockNow() {
+  if (!vault.key) return;
+  if (user && hasPending()) await uploadTrip().catch(() => {});
+  const box = await sealTrip(state);
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(box)); } catch { /* storage full */ }
+  await forgetKey();
+  Object.assign(vault, { key: null, box });
+  state = defaultState();
+  cryptoDialog.close();
+  render(true);
+  showLockScreen();
+}
+
+const cryptoDialog = $('#crypto-dialog');
+const cryptoForm = $('#crypto-form');
+const PASS_MIN = 10;
+
+function checkNewPassphrase(a, b) {
+  if (a.length < PASS_MIN) throw new Error(`Use at least ${PASS_MIN} characters. Four random words works well.`);
+  if (a !== b) throw new Error("The two passphrases don't match.");
+}
+
+function renderCryptoDialog() {
+  $('#crypto-off').hidden = encryptionOn();
+  $('#crypto-on').hidden = !encryptionOn();
+  $('#crypto-change').hidden = true;
+  showError('#crypto-error', '');
+  cryptoForm.reset();
+}
+
+$('#btn-crypto').addEventListener('click', () => {
+  renderCryptoDialog();
+  cryptoDialog.showModal();
+});
+$('#btn-crypto-cancel').addEventListener('click', () => cryptoDialog.close());
+$('#btn-crypto-close').addEventListener('click', () => cryptoDialog.close());
+$('#btn-crypto-lock').addEventListener('click', lockNow);
+$('#btn-lock').addEventListener('click', lockNow);
+
+async function cryptoAction(btn, fn) {
+  showError('#crypto-error', '');
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Working…';
+  try {
+    await fn();
+  } catch (e) {
+    showError('#crypto-error', e.message);
+  }
+  btn.disabled = false;
+  btn.textContent = label;
+}
+
+async function setPassphrase(pass, remember) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await deriveKey(pass, salt, KDF_ROUNDS);
+  Object.assign(vault, { salt, key, iter: KDF_ROUNDS, box: null });
+  if (remember) await rememberKey(key, salt);
+  else await forgetKey();
+}
+
+$('#btn-crypto-on').addEventListener('click', (e) => cryptoAction(e.target, async () => {
+  const f = cryptoForm.elements;
+  checkNewPassphrase(f.pass1.value, f.pass2.value);
+  if (user && !serverReady) {
+    throw new Error('Your Supabase project needs the encryption update first (supabase/encryption-update.sql). Run it, refresh this page, then try again.');
+  }
+  await setPassphrase(f.pass1.value, f.remember.checked);
+  if (trip?.share_token) state.shareKey = newShareKey(); // keep the family link working
+  save();
+  render();
+  renderCryptoDialog();
+}));
+
+$('#btn-crypto-change').addEventListener('click', () => { $('#crypto-change').hidden = false; });
+$('#btn-crypto-save').addEventListener('click', (e) => cryptoAction(e.target, async () => {
+  const f = cryptoForm.elements;
+  checkNewPassphrase(f.newpass1.value, f.newpass2.value);
+  await setPassphrase(f.newpass1.value, true);
+  save(); // re-sealed with the new passphrase; other devices will ask for it
+  renderCryptoDialog();
+}));
+
+$('#btn-crypto-off').addEventListener('click', (e) => cryptoAction(e.target, async () => {
+  if (!confirm('Turn off encryption? Your trip will be stored readable again on this device and in Supabase.')) return;
+  Object.assign(vault, { salt: null, key: null, box: null, iter: KDF_ROUNDS });
+  await forgetKey();
+  turningOff = true;
+  delete state.shareKey;
+  save();
+  render();
+  renderCryptoDialog();
+}));
+
+function renderCryptoStatus() {
+  $('#btn-lock').hidden = readOnly || !vault.key;
+  $('#crypto-status').textContent = encryptionOn() ? 'On' : 'Off';
+}
 
 // ---------- startup ----------
 
@@ -2107,7 +2446,10 @@ async function startSync() {
     user = null;
   }
   setSyncState(user ? 'saving' : 'signed-out');
-  if (user) await reconcile();
+  if (user) {
+    await checkServer();
+    await reconcile();
+  }
 
   // Pick up changes made elsewhere when coming back to the app.
   const refresh = () => { if (user && !document.hidden) reconcile(); };
@@ -2126,11 +2468,23 @@ async function startViewOnly() {
   const load = async () => {
     try {
       if (!sb) throw new Error('not configured');
-      const { data, error } = await sb.rpc('get_shared_trip', { token: viewToken });
+      let { data, error } = await sb.rpc('get_shared_trip', { token: viewToken });
       if (error) throw error;
       if (!data) {
         banner.textContent = 'This link is no longer active. Ask for a new one.';
         return;
+      }
+      if (isSealed(data)) {
+        if (!shareKeyFromUrl) {
+          banner.textContent = 'This link is missing its key. Ask for the full link (it ends with #k=…).';
+          return;
+        }
+        try {
+          data = await openWith(await shareCryptoKey(shareKeyFromUrl), data);
+        } catch {
+          banner.textContent = "This link's key doesn't match. Ask for a new link.";
+          return;
+        }
       }
       banner.textContent = '👀 View only — this trip was shared with you.';
       if (first || !sameTrip(data, state)) {
@@ -2151,7 +2505,10 @@ async function startViewOnly() {
 
 // ---------- go ----------
 
-showView(location.hash.slice(1));
+showView(hashView());
 render(true);
-if (readOnly) startViewOnly();
-else startSync();
+(async () => {
+  if (vault.box) await autoUnlock(); // encrypted trip on this device
+  if (readOnly) startViewOnly();
+  else startSync();
+})();
