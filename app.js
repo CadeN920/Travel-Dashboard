@@ -274,7 +274,7 @@ const map = L.map('map', { worldCopyJump: true, minZoom: 2 }).setView([40, 50], 
 // Esri street tiles need no API key. If they fail to load, fall back to OpenStreetMap.
 // A quiet gray basemap (light or dark to match the device) so the colored
 // route and pins stand out; place names come from a separate label layer.
-const canvas = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'Dark' : 'Light';
+const canvas = 'Dark'; // the app is always dark
 const esriUrl = (layer) => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_${canvas}_Gray_${layer}/MapServer/tile/{z}/{y}/{x}`;
 const esriTiles = L.tileLayer(esriUrl('Base'), {
   attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
@@ -386,8 +386,8 @@ function renderMap(fit = false) {
   const doneLegs = tripOver ? route.length : lastDone + offset;
   for (let i = 0; i < route.length - 1; i++) {
     drawLeg(route[i], route[i + 1], i < doneLegs
-      ? { color: '#e4572e', weight: 3 }
-      : { color: '#6b7280', weight: 2, dashArray: '6 8' });
+      ? { color: '#ff5fd8', weight: 3 }
+      : { color: '#8f86b8', weight: 2, dashArray: '6 8' });
   }
 
   if (fit) {
@@ -490,7 +490,6 @@ function renderStats() {
   const stops = sortedStops();
   const countries = new Set(stops.map((s) => s.country.trim().toLowerCase()));
   const nights = stops.reduce((n, s) => n + Math.max(daysBetween(s.arrive, s.depart), 0), 0);
-  const booked = stops.filter((s) => s.status === 'booked').length;
   const rated = stops.filter((s) => s.rating > 0);
   const fav = rated.sort((a, b) => b.rating - a.rating)[0];
 
@@ -499,9 +498,7 @@ function renderStats() {
     [countries.size, 'Countries'],
     [Math.round(routeKm(stops)).toLocaleString() + ' km', 'Distance'],
     [nights, 'Nights planned'],
-    [`${booked} of ${stops.length}`, 'Booked'],
     ideaStops().length && [ideaStops().length, 'Ideas to plan'],
-    schengenStatus() && [`${schengenStatus().max} / 90`, 'Schengen days'],
     fav && [escapeHTML(fav.name), 'Top rated'],
   ].filter(Boolean);
   $('#stats').innerHTML = tiles
@@ -1058,7 +1055,266 @@ function renderHome() {
   });
 
   $('#quiz-banner').hidden = readOnly || profileAnswered() > 0;
+  renderGauges();
+  renderMonthChart();
+  renderCountryBars();
+  renderCalendar();
 }
+
+// ---------- Home dashboard: ring gauges, charts and calendar ----------
+
+// Each night of the trip mapped to the stop you sleep at that night.
+function nightMap() {
+  const nights = new Map();
+  sortedStops().forEach((s) => {
+    for (let d = parseDate(s.arrive); toISO(d) < s.depart; d = addDays(d, 1)) nights.set(toISO(d), s);
+  });
+  return nights;
+}
+
+// The calendar months the trip touches, as { key: '2027-01', date }.
+function tripMonths() {
+  const { start, end } = state.trip;
+  const out = [];
+  let [y, m] = start.split('-').map(Number);
+  while (`${y}-${String(m).padStart(2, '0')}` <= end.slice(0, 7) && out.length < 36) {
+    out.push({ key: `${y}-${String(m).padStart(2, '0')}`, date: new Date(y, m - 1, 1) });
+    [y, m] = m === 12 ? [y + 1, 1] : [y, m + 1];
+  }
+  return out;
+}
+
+function ring(pct, tone) {
+  const r = 40;
+  const c = 2 * Math.PI * r;
+  const p = Math.max(0, Math.min(1, pct));
+  const arc = p > 0
+    ? `<circle cx="50" cy="50" r="${r}" class="ring-arc" stroke="url(#${tone === 'warn' ? 'warn' : 'neon'}-grad)"
+        stroke-dasharray="${(c * p).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 50 50)"/>`
+    : '';
+  return `<svg class="ring" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="${r}" class="ring-track"/>${arc}</svg>`;
+}
+
+function renderGauges() {
+  const { start, end } = state.trip;
+  const total = Math.max(1, daysBetween(start, end));
+  const elapsed = daysBetween(start, toISO(today()));
+  const stops = sortedStops();
+  const share = (a, b) => (b ? a / b : 0);
+  const pct = (p) => `${Math.round(p * 100)}<small>%</small>`;
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const gauge = ({ label, p, value, sub, tone = '', goto = '' }) => `
+    <${goto ? `button data-goto="${goto}"` : 'div'} class="gauge ${tone}">
+      <span class="gauge-ring">${ring(p, tone)}<span class="gauge-value">${value}</span></span>
+      <span class="gauge-text"><span class="gauge-label">${label}</span><span class="gauge-sub">${sub}</span></span>
+    </${goto ? 'button' : 'div'}>`;
+
+  const tripP = Math.max(0, Math.min(1, elapsed / total));
+  const cards = [{
+    label: 'Trip progress', p: tripP, value: pct(tripP), goto: 'trip',
+    sub: elapsed < 0 ? `Starts in ${plural(-elapsed, 'day')}` : elapsed >= total ? 'Trip complete 🎉' : `Day ${elapsed + 1} of ${total}`,
+  }];
+  if (stops.length) {
+    const booked = stops.filter((s) => s.status === 'booked').length;
+    cards.push({ label: 'Stops booked', p: share(booked, stops.length), value: pct(share(booked, stops.length)),
+      sub: `${booked} of ${plural(stops.length, 'stop')}`, goto: 'trip' });
+  }
+  const sch = schengenStatus();
+  if (sch) {
+    const left = 90 - sch.max;
+    cards.push({ label: 'Schengen days', p: sch.max / 90, value: `${sch.max}<small>/90</small>`,
+      tone: left < 10 ? 'warn' : '', goto: readOnly ? '' : 'todos',
+      sub: left < 0 ? `⚠ ${plural(-left, 'day')} over the limit` : left < 10 ? `⚠ Only ${plural(left, 'day')} to spare` : `${plural(left, 'day')} to spare` });
+  }
+  if (!readOnly) {
+    const all = allTodos();
+    const done = all.filter((x) => x.done).length;
+    if (all.length) {
+      cards.push({ label: 'To-dos done', p: share(done, all.length), value: pct(share(done, all.length)),
+        sub: `${done} of ${all.length} done`, goto: 'todos' });
+    }
+  }
+  $('#gauges').innerHTML = cards.map(gauge).join('');
+}
+
+// Shared hover tooltip for the charts and calendar.
+const chartTip = $('#chart-tip');
+function showTip(e, html) {
+  chartTip.innerHTML = html;
+  chartTip.hidden = false;
+  const r = chartTip.getBoundingClientRect();
+  let x = e.clientX + 14;
+  let y = e.clientY + 14;
+  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 8) y = e.clientY - r.height - 14;
+  chartTip.style.left = `${Math.max(8, x)}px`;
+  chartTip.style.top = `${Math.max(8, y)}px`;
+}
+const hideTip = () => { chartTip.hidden = true; };
+const stopNames = (stops) => [...new Set(stops)].map((s) => `${flagFor(s)}${escapeHTML(s.name)}`).join(', ');
+
+let monthData = [];
+function renderMonthChart() {
+  const el = $('#chart-months');
+  const nights = nightMap();
+  monthData = tripMonths().map((m) => {
+    const list = [...nights].filter(([d]) => d.startsWith(m.key));
+    return { ...m, n: list.length, stops: list.map(([, s]) => s) };
+  });
+  const totalNights = monthData.reduce((n, m) => n + m.n, 0);
+  $('#nights-total').textContent = totalNights ? `${totalNights} nights planned` : '';
+  if (!totalNights) {
+    el.innerHTML = '<p class="empty">Add stops with dates to see your nights by month.</p>';
+    return;
+  }
+  const W = Math.max(260, el.clientWidth || 560);
+  const H = 250;
+  const pad = { l: 30, r: 14, t: 22, b: 26 };
+  const yMax = Math.max(10, Math.ceil(Math.max(...monthData.map((m) => m.n)) / 10) * 10);
+  const n = monthData.length;
+  const x = (i) => (n === 1 ? (W + pad.l - pad.r) / 2 : pad.l + 8 + (i * (W - pad.l - pad.r - 16)) / (n - 1));
+  const y = (v) => pad.t + (1 - v / yMax) * (H - pad.t - pad.b);
+  const pts = monthData.map((m, i) => [x(i), y(m.n)]);
+  // Smooth curve that never overshoots: horizontal control points halfway between months.
+  let line = `M${pts[0][0]},${pts[0][1]}`;
+  for (let i = 1; i < pts.length; i++) {
+    const mx = (pts[i - 1][0] + pts[i][0]) / 2;
+    line += ` C${mx},${pts[i - 1][1]} ${mx},${pts[i][1]} ${pts[i][0]},${pts[i][1]}`;
+  }
+  const base = y(0);
+  const area = `${line} L${pts.at(-1)[0]},${base} L${pts[0][0]},${base} Z`;
+  const grid = [0, yMax / 2, yMax].map((v) => `
+    <line class="grid" x1="${pad.l}" x2="${W - pad.r}" y1="${y(v)}" y2="${y(v)}"/>
+    <text class="axis" x="${pad.l - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`).join('');
+  const every = n > 8 ? 2 : 1;
+  const labels = monthData.map((m, i) => (i % every ? '' : `<text class="axis" x="${x(i)}" y="${H - 6}" text-anchor="middle">${m.date.toLocaleDateString(undefined, { month: 'short' })}</text>`)).join('');
+  const peak = monthData.reduce((b, m, i) => (m.n > monthData[b].n ? i : b), 0);
+  const colW = n === 1 ? W : (W - pad.l - pad.r) / (n - 1);
+  const hits = monthData.map((m, i) => `<rect class="hit" data-i="${i}" x="${x(i) - colW / 2}" y="0" width="${colW}" height="${H}"/>`).join('');
+  el.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Nights per month">
+    <defs><linearGradient id="line-grad-live" gradientUnits="userSpaceOnUse" x1="${pad.l}" y1="0" x2="${W - pad.r}" y2="0">
+      <stop offset="0" stop-color="#ff4fd8"/><stop offset=".55" stop-color="#a855f7"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs>
+    ${grid}
+    <path class="area" d="${area}" fill="url(#area-grad)"/>
+    <path class="line" d="${line}" stroke="url(#line-grad-live)"/>
+    <line class="crosshair" x1="0" x2="0" y1="${pad.t - 6}" y2="${base}" hidden/>
+    ${pts.map(([px, py], i) => `<circle class="dot" data-dot="${i}" cx="${px}" cy="${py}" r="4.5"/>`).join('')}
+    <text class="peak" x="${pts[peak][0]}" y="${pts[peak][1] - 11}" text-anchor="middle">${monthData[peak].n}</text>
+    ${labels}${hits}
+  </svg>`;
+}
+
+$('#chart-months').addEventListener('pointermove', (e) => {
+  const hit = e.target.closest('.hit');
+  const svg = $('#chart-months svg');
+  if (!hit || !svg) return hideTip();
+  const i = Number(hit.dataset.i);
+  const m = monthData[i];
+  const dot = svg.querySelector(`[data-dot="${i}"]`);
+  const cross = svg.querySelector('.crosshair');
+  cross.removeAttribute('hidden');
+  cross.setAttribute('x1', dot.getAttribute('cx'));
+  cross.setAttribute('x2', dot.getAttribute('cx'));
+  svg.querySelectorAll('.dot').forEach((d) => d.classList.toggle('on', d === dot));
+  showTip(e, `<strong>${m.date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</strong>
+    <span>${m.n} night${m.n === 1 ? '' : 's'}</span>${m.stops.length ? `<span class="tip-sub">${stopNames(m.stops)}</span>` : ''}`);
+});
+$('#chart-months').addEventListener('pointerleave', () => {
+  hideTip();
+  $('#chart-months .crosshair')?.setAttribute('hidden', '');
+  document.querySelectorAll('#chart-months .dot.on').forEach((d) => d.classList.remove('on'));
+});
+new ResizeObserver(() => { if (!$('#view-home').hidden) renderMonthChart(); }).observe($('#chart-months'));
+
+const regionKey = (regions) => regions.map((c) => `<span class="key ${c}">${c}</span>`).join('');
+
+let countryRows = [];
+function renderCountryBars() {
+  const byCountry = new Map();
+  sortedStops().forEach((s) => {
+    const name = s.country.trim() || 'Unknown';
+    const row = byCountry.get(name.toLowerCase()) ?? { name, stop: s, nights: 0, stops: [] };
+    row.nights += Math.max(0, daysBetween(s.arrive, s.depart));
+    row.stops.push(s);
+    byCountry.set(name.toLowerCase(), row);
+  });
+  let rows = [...byCountry.values()].filter((r) => r.nights > 0).sort((a, b) => b.nights - a.nights);
+  if (rows.length > 8) {
+    const rest = rows.slice(7);
+    rows = [...rows.slice(0, 7), { name: `${rest.length} more`, other: true, nights: rest.reduce((n, r) => n + r.nights, 0), stops: rest.flatMap((r) => r.stops) }];
+  }
+  countryRows = rows;
+  const max = Math.max(1, ...rows.map((r) => r.nights));
+  $('#country-key').innerHTML = regionKey(CONTINENTS.filter((c) => rows.some((r) => r.stop?.continent === c)));
+  $('#chart-countries').innerHTML = rows.length
+    ? rows.map((r, i) => `
+      <div class="bar-row" data-i="${i}">
+        <span class="bar-label">${r.other ? '' : flagFor(r.stop)}${escapeHTML(r.name)}</span>
+        <span class="bar-track"><span class="bar ${r.other ? 'other' : r.stop.continent}" style="width:${(r.nights / max) * 100}%"></span></span>
+        <span class="bar-value">${r.nights}</span>
+      </div>`).join('')
+    : '<p class="empty">No nights planned yet.</p>';
+}
+$('#chart-countries').addEventListener('pointermove', (e) => {
+  const row = e.target.closest('.bar-row');
+  if (!row) return hideTip();
+  const r = countryRows[Number(row.dataset.i)];
+  showTip(e, `<strong>${r.other ? '' : flagFor(r.stop)}${escapeHTML(r.name)}</strong>
+    <span>${r.nights} night${r.nights === 1 ? '' : 's'}${r.other ? '' : ` · ${r.stop.continent}`}</span>
+    <span class="tip-sub">${stopNames(r.stops)}</span>`);
+});
+$('#chart-countries').addEventListener('pointerleave', hideTip);
+
+let calMonth = null; // 'YYYY-MM' shown in the calendar
+function renderCalendar() {
+  const months = tripMonths();
+  const t = toISO(today());
+  if (!months.some((m) => m.key === calMonth)) {
+    calMonth = (months.find((m) => t.startsWith(m.key)) ?? (t < state.trip.start ? months[0] : months.at(-1)))?.key;
+  }
+  const i = months.findIndex((m) => m.key === calMonth);
+  if (i < 0) return;
+  const { date } = months[i];
+  $('#cal-title').textContent = date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  $('#cal-prev').disabled = i === 0;
+  $('#cal-next').disabled = i === months.length - 1;
+
+  const nights = nightMap();
+  const lead = (date.getDay() + 6) % 7; // weeks start on Monday
+  const days = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  const head = ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d) => `<span class="cal-dow">${d}</span>`).join('');
+  const cells = Array.from({ length: lead }, () => '<span></span>');
+  for (let d = 1; d <= days; d++) {
+    const iso = `${calMonth}-${String(d).padStart(2, '0')}`;
+    const s = nights.get(iso);
+    const prev = nights.get(daysBefore(iso, 1));
+    const inTrip = iso >= state.trip.start && iso <= state.trip.end;
+    const cls = ['cal-day', s?.continent, s && 'stay', !s && inTrip && 'trip', iso === t && 'today', s && prev && prev !== s && 'move', s && iso < t && 'past']
+      .filter(Boolean).join(' ');
+    cells.push(`<button class="${cls}" data-day="${iso}"${s ? '' : ' tabindex="-1"'}>${d}</button>`);
+  }
+  $('#calendar').innerHTML = head + cells.join('');
+  const regions = CONTINENTS.filter((c) => [...nights.values()].some((s) => s.continent === c && s.arrive.slice(0, 7) <= calMonth && s.depart.slice(0, 7) >= calMonth));
+  $('#cal-key').innerHTML = `${regionKey(regions)}<span class="key move">Travel day</span>`;
+}
+$('#cal-prev').addEventListener('click', () => { const m = tripMonths(); calMonth = m[Math.max(0, m.findIndex((x) => x.key === calMonth) - 1)].key; renderCalendar(); });
+$('#cal-next').addEventListener('click', () => { const m = tripMonths(); calMonth = m[Math.min(m.length - 1, m.findIndex((x) => x.key === calMonth) + 1)].key; renderCalendar(); });
+$('#calendar').addEventListener('click', (e) => {
+  const day = e.target.closest('.cal-day')?.dataset.day;
+  const s = day && nightMap().get(day);
+  if (s) { hideTip(); showStop(s.id); }
+});
+$('#calendar').addEventListener('pointermove', (e) => {
+  const day = e.target.closest('.cal-day')?.dataset.day;
+  if (!day) return hideTip();
+  const nights = nightMap();
+  const s = nights.get(day);
+  const prev = nights.get(daysBefore(day, 1));
+  const when = parseDate(day).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  showTip(e, `<strong>${when}</strong>${s ? `<span>${prev && prev !== s ? `${flagFor(prev)}${escapeHTML(prev.name)} → ` : ''}${flagFor(s)}${escapeHTML(s.name)}</span>`
+    : `<span class="tip-sub">${day >= state.trip.start && day <= state.trip.end ? 'Travel / no stay planned' : 'Outside the trip'}</span>`}`);
+});
+$('#calendar').addEventListener('pointerleave', hideTip);
 
 // ---------- Discover: free recommendations from Wikivoyage ----------
 //
