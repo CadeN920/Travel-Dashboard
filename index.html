@@ -31,11 +31,13 @@
     </div>
     <div class="actions">
       <button id="btn-sync" class="ghost" hidden>☁︎ Sign in to sync</button>
+      <button id="btn-lock" class="ghost icon" title="Lock now (encrypted)" hidden>🔒</button>
       <button id="btn-share" class="ghost" title="Share" hidden>👥 <span class="label">Share</span></button>
       <div class="more">
         <button id="btn-more" class="ghost icon" title="More" aria-haspopup="menu" aria-expanded="false">⋯</button>
         <div id="more-menu" class="dropdown" role="menu" hidden>
           <button id="btn-settings" role="menuitem">⚙︎ Trip settings</button>
+          <button id="btn-crypto" role="menuitem">🔒 Encryption · <span id="crypto-status">Off</span></button>
           <button id="btn-export" role="menuitem">⬇︎ Export backup</button>
           <label class="button" role="menuitem">
             ⬆︎ Import backup <input id="file-import" type="file" accept="application/json" hidden />
@@ -382,6 +384,63 @@
           <button type="button" id="btn-auth-close" class="primary">Done</button>
         </menu>
       </div>
+    </form>
+  </dialog>
+
+  <!-- Unlock an encrypted trip -->
+  <dialog id="lock-dialog" class="lock-dialog">
+    <form id="lock-form" method="dialog">
+      <div class="lock-badge">🔒</div>
+      <h2>Your trip is encrypted</h2>
+      <p class="muted">Enter your passphrase to unlock it on this device. It never leaves this device.</p>
+      <label>Passphrase <input name="pass" type="password" autocomplete="current-password" required /></label>
+      <label class="check"><input name="remember" type="checkbox" checked /> Remember on this device</label>
+      <p id="lock-error" class="error" hidden></p>
+      <button type="submit" class="primary">Unlock</button>
+      <details class="lock-help">
+        <summary>Forgot your passphrase?</summary>
+        <p class="muted">Nobody can recover it, which is what keeps your trip private. If it's lost, you can remove the encrypted trip from this device and start fresh.</p>
+        <button type="button" id="btn-lock-reset" class="danger small">Remove from this device</button>
+      </details>
+    </form>
+  </dialog>
+
+  <!-- Encryption settings -->
+  <dialog id="crypto-dialog">
+    <form id="crypto-form" method="dialog">
+      <h2>🔒 Encryption</h2>
+      <div id="crypto-off" class="stack">
+        <p>Lock your trip with a passphrase. It's encrypted on your device <em>before</em> it's saved or uploaded, so Supabase, and anyone who got into it, only ever sees scrambled data.</p>
+        <ul class="crypto-points">
+          <li>Your travel partner needs the same passphrase. Tell them in person.</li>
+          <li>The family link keeps working, without confirmation numbers, booking links or notes. If you've already shared it, copy the new link from Share afterwards.</li>
+          <li><strong>If you forget the passphrase, your trip can't be recovered</strong>, by Supabase or anyone else. Save it in a password manager.</li>
+        </ul>
+        <label>Passphrase <input name="pass1" type="password" autocomplete="new-password" placeholder="At least 10 characters, e.g. four random words" /></label>
+        <label>Type it again <input name="pass2" type="password" autocomplete="new-password" /></label>
+        <label class="check"><input name="remember" type="checkbox" checked /> Remember on this device</label>
+        <menu>
+          <span class="spacer"></span>
+          <button type="button" id="btn-crypto-cancel" class="ghost">Cancel</button>
+          <button type="button" id="btn-crypto-on" class="primary">Encrypt my trip</button>
+        </menu>
+      </div>
+      <div id="crypto-on" class="stack" hidden>
+        <p><span class="pill ok">On</span> Your trip is encrypted with your passphrase. Only devices where you've entered it can read it.</p>
+        <div id="crypto-change" class="stack" hidden>
+          <label>New passphrase <input name="newpass1" type="password" autocomplete="new-password" /></label>
+          <label>Type it again <input name="newpass2" type="password" autocomplete="new-password" /></label>
+          <button type="button" id="btn-crypto-save" class="primary">Save new passphrase</button>
+        </div>
+        <menu>
+          <button type="button" id="btn-crypto-lock" class="ghost">Lock now</button>
+          <button type="button" id="btn-crypto-change" class="ghost">Change passphrase</button>
+          <button type="button" id="btn-crypto-off" class="danger">Turn off</button>
+          <span class="spacer"></span>
+          <button type="button" id="btn-crypto-close" class="primary">Done</button>
+        </menu>
+      </div>
+      <p id="crypto-error" class="error" hidden></p>
     </form>
   </dialog>
 

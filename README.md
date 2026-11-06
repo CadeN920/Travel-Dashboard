@@ -38,13 +38,15 @@ Setup:
 The anon key is designed to be public: the database's row-level security only lets each account read the trips it owns or was added to, and the family link only reveals the one trip it belongs to. Without `config.js` values, the app works on a single device as before.
 
 ## Privacy & security
+- **Optional end-to-end encryption (⋯ → 🔒 Encryption).** Pick a passphrase and the whole trip is encrypted in your browser (AES-256-GCM, key from PBKDF2-SHA256 with 600,000 rounds) before it is saved or synced. Supabase, GitHub and anyone with database access only ever see scrambled data. Each device asks for the passphrase once (you can choose not to remember it), and 🔒 locks the trip on the spot. There is no reset: if the passphrase is lost, the trip can't be recovered, so keep it in a password manager and keep an Export backup somewhere safe.
+- **Encrypted family link.** With encryption on, the family link carries its own random key after `#k=` (the part of a link that browsers never send to a server), and only a trimmed copy of the trip (no confirmation numbers, booking links, booking notes, to-dos, profile or wishlist) is encrypted with it.
 - **Your trip is private by default.** Database row-level security lets an account read and edit only trips it owns or was added to; partners can edit but can't take ownership, invite others, delete the trip or touch the family link.
 - **The family link never carries sensitive details.** The database strips booking confirmation numbers, booking links and booking notes, plus to-dos, the travel profile and the wishlist, before anything is sent. Links are 256-bit random and can be reset or turned off.
 - **Locked-down page:** a Content-Security-Policy limits where code can load from and which services the app can talk to; the CDN libraries are pinned with Subresource Integrity hashes; no referrer is ever sent, so the family link's secret can't leak through outgoing links.
 - **Untrusted data is cleaned** on load (imports, sync, family link) so tampered values can't inject markup, and all text is escaped before display.
 - **No secrets in this repo.** The Supabase publishable key is designed to be public; access is enforced by the database rules in `supabase/setup.sql`.
 
-Existing projects created before the family-link filtering should run [`supabase/privacy-update.sql`](supabase/privacy-update.sql) once in the Supabase SQL Editor.
+Existing projects created before the family-link filtering should run [`supabase/privacy-update.sql`](supabase/privacy-update.sql) once in the Supabase SQL Editor. Projects created before encryption should also run [`supabase/encryption-update.sql`](supabase/encryption-update.sql) once (safe to run again).
 
 ## Run it
 Open `index.html` in a browser, or serve the folder:

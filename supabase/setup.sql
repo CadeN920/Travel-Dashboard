@@ -8,9 +8,10 @@
 create table if not exists public.trips (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
-  data jsonb not null,
+  data jsonb not null,          -- the trip, or a sealed box when encryption is on
   updated_at timestamptz not null default now(),
-  share_token text unique
+  share_token text unique,
+  share_data jsonb              -- sealed family-link snapshot when encryption is on
 );
 
 create table if not exists public.trip_editors (
@@ -26,7 +27,7 @@ alter table public.trip_editors enable row level security;
 -- share links change only through the functions below.
 revoke all on public.trips, public.trip_editors from anon, authenticated;
 grant select, delete on public.trips to authenticated;
-grant insert (data, updated_at), update (data, updated_at) on public.trips to authenticated;
+grant insert (data, updated_at, share_data), update (data, updated_at, share_data) on public.trips to authenticated;
 grant select, insert, delete on public.trip_editors to authenticated;
 
 -- Helpers (security definer so the policies don't loop into each other).
@@ -59,39 +60,47 @@ create policy "Owners add editors" on public.trip_editors for insert to authenti
 create policy "Owners remove editors" on public.trip_editors for delete to authenticated
   using (public.owns_trip(trip_id));
 
--- Family view-only link: anyone holding the token can read that one trip,
--- minus what family doesn't need. Booking confirmation numbers, links and
--- notes, to-dos, the travel profile and the wishlist are removed here, so
--- they never leave the database.
+revoke execute on function public.owns_trip(uuid), public.is_trip_editor(uuid) from public, anon;
+grant execute on function public.owns_trip(uuid), public.is_trip_editor(uuid) to authenticated;
+
+-- Family link: the sealed snapshot when the trip is encrypted; otherwise the
+-- readable trip minus booking codes, links and notes, to-dos, profile and
+-- wishlist (filtered here so those never leave the database).
 create or replace function public.get_shared_trip(token text) returns jsonb
 language sql stable security definer set search_path = public as $$
-  select (data - 'todos' - 'todoState' - 'profile' - 'wishlist')
-    || jsonb_build_object('bookings', coalesce((
-         select jsonb_agg(b - 'confirmation' - 'link' - 'notes')
-         from jsonb_array_elements(coalesce(data -> 'bookings', '[]'::jsonb)) as b
-       ), '[]'::jsonb))
+  select case
+    when share_data is not null then share_data
+    when data ? 'enc' then null
+    else (data - 'todos' - 'todoState' - 'profile' - 'wishlist')
+      || jsonb_build_object('bookings', coalesce((
+           select jsonb_agg(b - 'confirmation' - 'link' - 'notes')
+           from jsonb_array_elements(coalesce(data -> 'bookings', '[]'::jsonb)) as b
+         ), '[]'::jsonb))
+  end
   from trips
   where token is not null and share_token = token;
 $$;
 
--- Owner makes a new link (the old one stops working) or turns it off.
+-- A new link or turning the link off also drops the old snapshot.
 create or replace function public.new_share_link(trip uuid) returns text
 language plpgsql security definer set search_path = public as $$
 declare
   t text := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
 begin
-  update trips set share_token = t where id = trip and owner_id = auth.uid();
+  update trips set share_token = t, share_data = null where id = trip and owner_id = auth.uid();
   if not found then raise exception 'Only the trip owner can share it'; end if;
   return t;
 end $$;
 
 create or replace function public.stop_share_link(trip uuid) returns void
 language sql security definer set search_path = public as $$
-  update trips set share_token = null where id = trip and owner_id = auth.uid();
+  update trips set share_token = null, share_data = null where id = trip and owner_id = auth.uid();
 $$;
+
+-- Lets the app check this update has been applied.
+create or replace function public.wanderlog_schema_version() returns int
+language sql immutable as $$ select 2 $$;
 
 revoke execute on function public.new_share_link(uuid), public.stop_share_link(uuid) from public, anon;
 grant execute on function public.new_share_link(uuid), public.stop_share_link(uuid) to authenticated;
-grant execute on function public.get_shared_trip(text) to anon, authenticated;
-revoke execute on function public.owns_trip(uuid), public.is_trip_editor(uuid) from public, anon;
-grant execute on function public.owns_trip(uuid), public.is_trip_editor(uuid) to authenticated;
+grant execute on function public.get_shared_trip(text), public.wanderlog_schema_version() to anon, authenticated;

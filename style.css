@@ -648,3 +648,15 @@ menu { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 6px 0 0; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ---------- encryption ---------- */
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.check { flex-direction: row; align-items: center; gap: 8px; color: var(--ink); font-size: .88rem; }
+.check input { width: 16px; height: 16px; padding: 0; accent-color: var(--accent); }
+.crypto-points { margin: 0; padding-left: 18px; color: var(--muted); font-size: .88rem; display: flex; flex-direction: column; gap: 6px; }
+.lock-dialog form { align-items: stretch; text-align: left; }
+.lock-badge { font-size: 2rem; }
+.lock-help summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
+.lock-help { display: flex; flex-direction: column; gap: 8px; }
+.lock-help p { margin: 8px 0; font-size: .85rem; }
+body.locked main, body.locked .view { filter: blur(6px); pointer-events: none; }
