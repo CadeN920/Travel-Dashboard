@@ -75,6 +75,7 @@ function defaultState() {
     todos: [],
     todoState: {},
     profile: {},
+    wishlist: [],
   };
 }
 
@@ -86,6 +87,7 @@ function migrate(data) {
   data.todos ??= [];        // your own tasks
   data.todoState ??= {};    // suggested reminders you've ticked off or dismissed
   data.profile ??= {};      // travel-preferences quiz answers
+  data.wishlist ??= [];     // places saved from Discover
   return data;
 }
 
@@ -424,6 +426,7 @@ function render(fit = false) {
   renderTodos();
   renderHome();
   renderProfile();
+  if (!$('#view-discover').hidden) renderDiscover();
   renderMap(fit);
 }
 
@@ -557,14 +560,15 @@ function renderBookings() {
 
 // ---------- views: Home · Trip · Bookings · To-dos · Profile ----------
 
-const VIEWS = ['home', 'trip', 'bookings', 'todos', 'profile'];
-const PRIVATE_VIEWS = ['todos', 'profile']; // not shown on the family link
+const VIEWS = ['home', 'trip', 'discover', 'bookings', 'todos', 'profile'];
+const PRIVATE_VIEWS = ['discover', 'todos', 'profile']; // not shown on the family link
 
 function showView(name) {
   if (!VIEWS.includes(name) || (readOnly && PRIVATE_VIEWS.includes(name))) name = 'home';
   VIEWS.forEach((v) => { $(`#view-${v}`).hidden = v !== name; });
   document.querySelectorAll('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
   window.scrollTo({ top: 0 });
+  if (name === 'discover') openDiscover();
 }
 // The URL hash remembers the tab (#trip, #todos, …) so back/forward and refresh work.
 function goTo(name) {
@@ -864,7 +868,7 @@ function renderHome() {
       <span class="num">${n}</span>
       <span class="up-body">
         <span class="up-title">${flagFor(s)}${escapeHTML(s.name)}${status === 'current' ? '<span class="badge">Now</span>' : ''}</span>
-        <span class="muted">${fmtDate(s.arrive)} → ${fmtDate(s.depart)} · ${daysBetween(s.arrive, s.depart)} nights${s.status === 'booked' ? ' · Booked' : ''}</span>
+        <span class="muted">${fmtDate(s.arrive)} → ${fmtDate(s.depart)} · ${daysBetween(s.arrive, s.depart)} nights${s.status === 'booked' ? ' · Booked' : ''}${wishlistFor(s.id).length ? ` · ★ ${wishlistFor(s.id).length} saved` : ''}</span>
       </span>
       <span class="up-when muted">${status === 'current' ? '' : `in ${daysBetween(t, s.arrive)}d`}</span>`;
     li.addEventListener('click', () => showStop(s.id));
@@ -873,6 +877,378 @@ function renderHome() {
 
   $('#quiz-banner').hidden = readOnly || profileAnswered() > 0;
 }
+
+// ---------- Discover: free recommendations from Wikivoyage ----------
+//
+// Wikivoyage is the free, traveler-written guide (CC BY-SA). Its city
+// articles list places as templates like {{see | name=... | content=...}}
+// under See / Do / Eat / Drink / Buy. We read those lists through the public
+// MediaWiki API (no key, no account) and rank them with the travel profile.
+
+const WV_API = 'https://en.wikivoyage.org/w/api.php';
+const WV_CACHE_DAYS = 7;
+const LISTING_TYPES = ['see', 'do', 'eat', 'drink', 'buy'];
+const TYPE_LABEL = { see: '🏛 See', do: '🎟️ Do', eat: '🍽 Eat', drink: '🍷 Drink', buy: '🛍 Shop' };
+const discover = { stopId: null, place: '', listings: [], cat: 'all', shown: 20, loading: false, error: '' };
+
+async function wvFetch(titles) {
+  const url = `${WV_API}?action=query&prop=revisions&rvprop=content&rvslots=main&redirects=1` +
+    `&format=json&formatversion=2&origin=*&titles=${encodeURIComponent(titles.join('|'))}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Wikivoyage responded ${res.status}`);
+  const data = await res.json();
+  return (data.query?.pages ?? [])
+    .filter((p) => !p.missing && p.revisions)
+    .map((p) => ({ title: p.title, text: p.revisions[0].slots.main.content }));
+}
+
+// Split a template body on top-level "|" (ignoring ones inside {{ }} or [[ ]]).
+function templateParams(body) {
+  const parts = [];
+  let depth = 0;
+  let cur = '';
+  for (let k = 0; k < body.length; k++) {
+    const two = body.slice(k, k + 2);
+    if (two === '{{' || two === '[[') { depth++; cur += two; k++; continue; }
+    if (two === '}}' || two === ']]') { depth--; cur += two; k++; continue; }
+    if (body[k] === '|' && depth === 0) { parts.push(cur); cur = ''; continue; }
+    cur += body[k];
+  }
+  parts.push(cur);
+  const params = {};
+  parts.slice(1).forEach((p) => {
+    const eq = p.indexOf('=');
+    if (eq > 0) params[p.slice(0, eq).trim().toLowerCase()] = p.slice(eq + 1).trim();
+  });
+  return params;
+}
+
+// Wiki markup → plain text.
+function cleanWiki(s = '') {
+  let out = s;
+  for (let i = 0; i < 3; i++) out = out.replace(/\{\{[^{}]*\}\}/g, ''); // nested templates
+  return out
+    .replace(/\[\[(?:[^|\]]*\|)?([^\]]+)\]\]/g, '$1')
+    .replace(/\[https?:\/\/\S+\s([^\]]+)\]/g, '$1')
+    .replace(/\[https?:\/\/[^\]\s]+\]/g, '')
+    .replace(/'{2,}/g, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseListings(text, source) {
+  const out = [];
+  let heading = '';
+  const re = /^(={2,4})\s*([^=\n]+?)\s*\1\s*$|\{\{\s*(see|do|eat|drink|buy|listing)\s*(?=[\n|}])/gim;
+  let m;
+  while ((m = re.exec(text))) {
+    if (m[1]) { heading = m[2]; continue; }
+    // Find the matching "}}" for this template.
+    let depth = 0;
+    let j = m.index;
+    for (; j < text.length - 1; j++) {
+      if (text[j] === '{' && text[j + 1] === '{') { depth++; j++; }
+      else if (text[j] === '}' && text[j + 1] === '}') { depth--; j++; if (depth === 0) break; }
+    }
+    const p = templateParams(text.slice(m.index + 2, j - 1));
+    re.lastIndex = j + 1;
+    let type = m[3].toLowerCase();
+    if (type === 'listing') type = (p.type || '').toLowerCase();
+    const name = cleanWiki(p.name);
+    if (!LISTING_TYPES.includes(type) || !name) continue;
+    out.push({
+      type, name, source,
+      section: heading,
+      content: cleanWiki(p.content || p.description),
+      alt: cleanWiki(p.alt),
+      price: cleanWiki(p.price),
+      hours: cleanWiki(p.hours),
+      address: cleanWiki(p.address),
+      url: /^https?:\/\//.test(p.url || '') ? p.url.trim() : '',
+      lat: parseFloat(p.lat) || null,
+      lng: parseFloat(p.long ?? p.lon) || null,
+    });
+  }
+  return out;
+}
+
+// Load a city's listings (and its district pages, for big cities that
+// split their listings by neighborhood). Cached in this browser for a week.
+async function loadGuide(place) {
+  const key = `wv:${place.toLowerCase()}`;
+  try {
+    const cached = JSON.parse(localStorage.getItem(key) || 'null');
+    if (cached && Date.now() - cached.at < WV_CACHE_DAYS * 86400000) return cached;
+  } catch { /* no cache */ }
+
+  const [page] = await wvFetch([place]);
+  if (!page) return { title: place, listings: [], missing: true };
+  let listings = parseListings(page.text, page.title);
+  const core = listings.filter((l) => l.type !== 'buy').length;
+  const escaped = page.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const districts = [...new Set([...page.text.matchAll(new RegExp(`\\[\\[(${escaped}/[^\\]|#]+)`, 'g'))]
+    .map((d) => d[1].trim()))].slice(0, 12);
+  if (core < 15 && districts.length) {
+    const pages = await wvFetch(districts);
+    pages.forEach((d) => { listings = listings.concat(parseListings(d.text, d.title)); });
+  }
+  // The same place can appear on the city page and a district page.
+  const seen = new Set();
+  listings = listings.filter((l) => {
+    const k = `${l.type}:${l.name.toLowerCase()}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const result = { at: Date.now(), title: page.title, listings };
+  try { localStorage.setItem(key, JSON.stringify(result)); } catch { /* storage full: skip cache */ }
+  return result;
+}
+
+// Which Wikivoyage article to use for a stop: the city in its name, else the
+// city its notes say it's pinned at ("pinned at Lisbon", "Fly into Hanoi").
+function guidePlaceFor(s) {
+  if (s.guidePlace) return s.guidePlace;
+  if (s.name.trim().toLowerCase() !== s.country.trim().toLowerCase()) return s.name;
+  const m = (s.notes || '').match(/pinned at ([^).]+)/i) || (s.notes || '').match(/fly into ([A-Z][^.,]+)/i);
+  return m ? m[1].trim() : s.name;
+}
+
+// ---- ranking by the travel profile ----
+
+const INTEREST_MATCH = {
+  'Food & restaurants': { types: ['eat'], words: ['restaurant', 'tapas', 'dish', 'cuisine', 'food', 'tasting'] },
+  'Cafés': { words: ['café', 'cafe', 'coffee', 'bakery', 'pastry', 'pastéis', 'brunch'] },
+  'Nightlife': { types: ['drink'], words: ['bar', 'club', 'nightlife', 'cocktail', 'party', 'late'] },
+  'Live music': { words: ['music', 'jazz', 'fado', 'flamenco', 'concert', 'live band', 'dj', 'gig'] },
+  'Festivals & events': { words: ['festival', 'carnival', 'fiesta', 'celebration', 'event', 'parade'] },
+  'Museums & history': { words: ['museum', 'history', 'historic', 'castle', 'palace', 'ruins', 'fortress', 'archaeolog', 'medieval', 'roman'] },
+  'Architecture': { words: ['cathedral', 'church', 'basilica', 'architecture', 'tower', 'mosque', 'temple', 'gaudí', 'gothic', 'baroque'] },
+  'Art': { words: ['art', 'gallery', 'painting', 'mural', 'street art', 'exhibition'] },
+  'Local culture': { words: ['traditional', 'local', 'craft', 'neighbourhood', 'neighborhood', 'souk', 'medina', 'cooking class'] },
+  'Hiking & nature': { words: ['hike', 'hiking', 'trail', 'park', 'garden', 'mountain', 'nature', 'lake', 'waterfall', 'canyon', 'cave'] },
+  'Beaches': { words: ['beach', 'coast', 'swim', 'island', 'bay'] },
+  'Sports': { words: ['football', 'stadium', 'surf', 'bike', 'cycling', 'kayak', 'climb', 'dive', 'diving'] },
+  'Markets & shopping': { types: ['buy'], words: ['market', 'shop', 'shopping', 'bazaar', 'souk', 'boutique'] },
+  'Photography': { words: ['viewpoint', 'view', 'panoram', 'sunset', 'sunrise', 'miradouro', 'lookout', 'rooftop'] },
+  'Wellness': { words: ['spa', 'bath', 'thermal', 'hammam', 'yoga', 'massage', 'hot spring'] },
+};
+
+function scoreListing(l, profile) {
+  const text = `${l.name} ${l.alt} ${l.content} ${l.section}`.toLowerCase();
+  const reasons = [];
+  let score = l.type === 'see' || l.type === 'do' ? 1 : 0;
+  if (l.content.length > 60) score += 0.5; // a real description usually means a notable place
+
+  (profile.interests || []).forEach((interest) => {
+    const rule = INTEREST_MATCH[interest];
+    if (!rule) return;
+    const hit = (rule.types || []).includes(l.type) || rule.words.some((w) => text.includes(w));
+    if (hit) { score += 3; reasons.push(interest); }
+  });
+  if (profile.rhythm === 'Night owl' && (l.type === 'drink' || /\bnight|late\b/.test(text))) score += 1;
+  if (profile.rhythm === 'Early bird' && /sunrise|morning|breakfast/.test(text)) score += 1;
+  const tier = l.section.toLowerCase();
+  if (profile.budget === 'Shoestring') {
+    if (tier.includes('budget') || /\bfree\b/.test(text)) { score += 2; reasons.push('Budget-friendly'); }
+    if (tier.includes('splurge')) score -= 2;
+  }
+  if (profile.budget === 'Happy to splurge sometimes' && tier.includes('splurge')) score += 1;
+  if (profile.food === 'Try anything once' && l.type === 'eat' && /traditional|local|street food|market/.test(text)) score += 1;
+
+  // Words from your goals and must-dos (e.g. "Sahara", "cooking class").
+  const goalWords = `${profile.goals || ''} ${profile.mustDos || ''}`.toLowerCase()
+    .split(/[^a-zà-ÿ]+/).filter((w) => w.length >= 5);
+  if (goalWords.some((w) => text.includes(w))) { score += 3; reasons.push('Your goals'); }
+
+  return { score, reasons: [...new Set(reasons)] };
+}
+
+// ---- wishlist ----
+
+const wishlistFor = (stopId) => state.wishlist.filter((w) => w.stopId === stopId);
+const isSaved = (stopId, name) => state.wishlist.some((w) => w.stopId === stopId && w.name === name);
+
+function toggleSaved(l) {
+  const id = discover.stopId;
+  if (isSaved(id, l.name)) {
+    state.wishlist = state.wishlist.filter((w) => !(w.stopId === id && w.name === l.name));
+  } else {
+    state.wishlist.push({
+      id: uid(), stopId: id, done: false,
+      name: l.name, type: l.type, content: l.content, lat: l.lat, lng: l.lng, url: l.url,
+      place: discover.place,
+    });
+  }
+  save();
+  render();
+}
+
+const mapsLink = (l, place) => l.lat && l.lng
+  ? `https://www.google.com/maps/search/?api=1&query=${l.lat},${l.lng}`
+  : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${l.name}, ${place}`)}`;
+
+// ---- rendering ----
+
+function discoverStops() {
+  return sortedStops().filter((s) => s.depart >= toISO(today()));
+}
+
+function renderDiscover() {
+  const stops = discoverStops().length ? discoverStops() : sortedStops();
+  const select = $('#discover-stop');
+  if (!stops.some((s) => s.id === discover.stopId)) discover.stopId = stops[0]?.id ?? null;
+  select.innerHTML = stops.map((s) =>
+    `<option value="${s.id}">${sortedStops().indexOf(s) + 1}. ${escapeHTML(s.name)} · ${fmtDate(s.arrive)} – ${fmtDate(s.depart)}</option>`
+  ).join('');
+  select.value = discover.stopId ?? '';
+  const stop = state.stops.find((s) => s.id === discover.stopId);
+  if (!stop) {
+    $('#discover-status').hidden = false;
+    $('#discover-status').textContent = 'Add some stops to your trip to get recommendations.';
+    $('#discover-list').innerHTML = '';
+    return;
+  }
+  if (document.activeElement !== $('#discover-place')) $('#discover-place').value = discover.place || guidePlaceFor(stop);
+  $('#discover-profile-hint').hidden = profileAnswered() > 0;
+
+  // Wishlist for this stop
+  const wish = wishlistFor(stop.id);
+  $('#wishlist-card').hidden = !wish.length;
+  $('#wishlist-title').textContent = `★ Your wishlist for ${stop.name} · ${wish.filter((w) => w.done).length}/${wish.length} done`;
+  const wl = $('#wishlist-list');
+  wl.innerHTML = '';
+  wish.forEach((w) => {
+    const li = document.createElement('li');
+    li.className = `task${w.done ? ' done' : ''}`;
+    li.innerHTML = `
+      <input type="checkbox" ${w.done ? 'checked' : ''} aria-label="Done" />
+      <div class="task-body">
+        <div class="task-text">${escapeHTML(w.name)}</div>
+        <div class="task-meta">${TYPE_LABEL[w.type] ?? ''} · <a href="${mapsLink(w, w.place || stop.name)}" target="_blank" rel="noopener">Map</a></div>
+      </div>
+      <button type="button" class="task-x" title="Remove">×</button>`;
+    li.querySelector('input').addEventListener('change', (e) => {
+      w.done = e.target.checked;
+      save();
+      render();
+    });
+    li.querySelector('.task-x').addEventListener('click', () => {
+      state.wishlist = state.wishlist.filter((x) => x.id !== w.id);
+      save();
+      render();
+    });
+    wl.appendChild(li);
+  });
+
+  // Recommendations
+  const status = $('#discover-status');
+  const list = $('#discover-list');
+  list.innerHTML = '';
+  $('#discover-more').hidden = true;
+  if (discover.loading) {
+    status.hidden = false;
+    status.textContent = `Finding things to do in ${discover.place}…`;
+    return;
+  }
+  if (discover.error) {
+    status.hidden = false;
+    status.textContent = discover.error;
+    return;
+  }
+  const ranked = discover.listings
+    .filter((l) => discover.cat === 'all' || l.type === discover.cat)
+    .map((l) => ({ l, ...scoreListing(l, state.profile) }))
+    .sort((a, b) => b.score - a.score);
+  status.hidden = ranked.length > 0;
+  if (!ranked.length) status.textContent = 'Nothing listed in this category. Try another one.';
+
+  ranked.slice(0, discover.shown).forEach(({ l, reasons }) => {
+    const saved = isSaved(stop.id, l.name);
+    const meta = [l.section && !LISTING_TYPES.includes(l.section.toLowerCase()) && l.section, l.price, l.hours]
+      .filter(Boolean).map(escapeHTML).join(' · ');
+    const li = document.createElement('li');
+    li.className = 'rec';
+    li.innerHTML = `
+      <div class="rec-main">
+        <div class="rec-top"><span class="rec-type">${TYPE_LABEL[l.type]}</span>
+          ${reasons.length ? `<span class="match">✓ ${escapeHTML(reasons.slice(0, 2).join(' · '))}</span>` : ''}</div>
+        <div class="rec-title">${escapeHTML(l.name)}</div>
+        ${l.content ? `<p class="rec-text">${escapeHTML(l.content)}</p>` : ''}
+        ${meta ? `<div class="rec-meta">${meta}</div>` : ''}
+      </div>
+      <div class="rec-actions">
+        <button type="button" class="star${saved ? ' on' : ''}">${saved ? '★ Saved' : '☆ Save'}</button>
+        <a class="button ghost small" href="${mapsLink(l, discover.place)}" target="_blank" rel="noopener">Map</a>
+        ${l.url ? `<a class="button ghost small" href="${escapeHTML(l.url)}" target="_blank" rel="noopener">Website</a>` : ''}
+      </div>`;
+    li.querySelector('.star').addEventListener('click', () => toggleSaved(l));
+    list.appendChild(li);
+  });
+  $('#discover-more').hidden = ranked.length <= discover.shown;
+  $('#discover-source').href = `https://en.wikivoyage.org/wiki/${encodeURIComponent((discover.title || discover.place).replace(/ /g, '_'))}`;
+}
+
+async function loadDiscover(place) {
+  if (!place) return;
+  Object.assign(discover, { place, loading: true, error: '', listings: [], shown: 20 });
+  renderDiscover();
+  try {
+    const guide = await loadGuide(place);
+    if (discover.place !== place) return; // a newer search started meanwhile
+    discover.title = guide.title;
+    discover.listings = guide.listings;
+    if (guide.missing) discover.error = `Wikivoyage doesn't have a guide called "${place}". Try a nearby city's name.`;
+    else if (!guide.listings.length) discover.error = `The ${guide.title} guide doesn't list specific places yet. Try a nearby city.`;
+  } catch (e) {
+    console.warn(e);
+    discover.error = "Couldn't reach Wikivoyage. Check your connection and try again.";
+  }
+  discover.loading = false;
+  renderDiscover();
+}
+
+function openDiscover() {
+  const stops = discoverStops().length ? discoverStops() : sortedStops();
+  if (!stops.some((s) => s.id === discover.stopId)) discover.stopId = stops[0]?.id ?? null;
+  const stop = state.stops.find((s) => s.id === discover.stopId);
+  // Reload when the stop's city changed, or retry if the last attempt failed.
+  if (stop && (discover.place !== guidePlaceFor(stop) || discover.error)) loadDiscover(guidePlaceFor(stop));
+  else renderDiscover();
+}
+
+$('#discover-stop').addEventListener('change', (e) => {
+  discover.stopId = e.target.value;
+  const stop = state.stops.find((s) => s.id === discover.stopId);
+  loadDiscover(guidePlaceFor(stop));
+});
+function searchDiscoverPlace() {
+  const place = $('#discover-place').value.trim();
+  const stop = state.stops.find((s) => s.id === discover.stopId);
+  if (!place || !stop) return;
+  // Remember the chosen city for this stop (e.g. "Porto" for Portugal).
+  if (place !== guidePlaceFor(stop)) {
+    stop.guidePlace = place;
+    save();
+  }
+  loadDiscover(place);
+}
+$('#discover-go').addEventListener('click', searchDiscoverPlace);
+$('#discover-place').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); searchDiscoverPlace(); }
+});
+document.querySelectorAll('#discover-filters .chip').forEach((chip) => chip.addEventListener('click', () => {
+  document.querySelectorAll('#discover-filters .chip').forEach((c) => c.classList.toggle('active', c === chip));
+  discover.cat = chip.dataset.cat;
+  discover.shown = 20;
+  renderDiscover();
+}));
+$('#discover-more').addEventListener('click', () => {
+  discover.shown += 20;
+  renderDiscover();
+});
 
 // ---------- Profile: the travel-preferences quiz ----------
 

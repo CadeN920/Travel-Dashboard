@@ -366,7 +366,7 @@ menu { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 6px 0 0; }
   background: var(--accent); color: #fff; font-size: .7rem; font-weight: 700;
   display: inline-grid; place-items: center;
 }
-.readonly .nav-item[data-view="todos"], .readonly .nav-item[data-view="profile"],
+.readonly .nav-item[data-view="discover"], .readonly .nav-item[data-view="todos"], .readonly .nav-item[data-view="profile"],
 .readonly #btn-add-booking { display: none; }
 
 /* ---------- pages & cards ---------- */
@@ -455,6 +455,39 @@ menu { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 6px 0 0; }
 #todo-list .section-head { margin: 14px 10px 2px; }
 #todo-list .section-head.overdue { color: var(--danger); }
 
+/* ---------- Discover ---------- */
+
+.discover-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.discover-controls > label { min-width: 0; }
+.discover-controls select { width: 100%; min-width: 0; text-overflow: ellipsis; }
+.profile-hint { margin: 12px 2px 0; font-size: .9rem; color: var(--muted); }
+.profile-hint .link { padding: 0; }
+.discover-filters { margin: 18px 0 10px; }
+.discover-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.rec {
+  display: grid; grid-template-columns: 1fr auto; gap: 14px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.rec-top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: .78rem; }
+.rec-type { color: var(--muted); font-weight: 600; }
+.match { color: var(--good); font-weight: 600; }
+.rec-title { font-weight: 650; font-size: 1rem; margin-top: 3px; }
+.rec-text {
+  margin: 4px 0 0; font-size: .87rem; color: color-mix(in srgb, var(--ink) 78%, var(--muted));
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.rec-meta { font-size: .78rem; color: var(--muted); margin-top: 6px; }
+.rec-actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.rec-actions .button { text-align: center; text-decoration: none; }
+.star { font-size: .82rem; padding: 6px 12px; }
+.star.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.more-btn { display: block; margin: 14px auto 0; }
+.discover-credit { margin-top: 18px; }
+.discover-credit a { color: var(--muted); }
+#wishlist-card { margin-top: 14px; }
+#wishlist-list a { color: var(--europe); text-decoration: none; }
+
 /* ---------- profile quiz ---------- */
 
 .profile-form { display: flex; flex-direction: column; gap: 22px; padding: 22px; }
@@ -496,6 +529,9 @@ menu { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 6px 0 0; }
   .quiz-banner { width: calc(100% - 32px); margin: 14px 16px 0; }
   #view-trip .layout { height: auto; padding-top: 12px; }
   .todo-add { flex-wrap: wrap; }
+  .discover-controls { grid-template-columns: 1fr; }
+  .rec { grid-template-columns: 1fr; }
+  .rec-actions { flex-direction: row; }
   .todo-add input[name="text"] { flex-basis: 100%; }
   .topbar { padding: 10px 16px; }
   .brand .wordmark { display: none; }

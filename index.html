@@ -36,6 +36,7 @@
   <nav class="nav" id="nav" aria-label="Sections">
     <button data-view="home" class="nav-item active"><span class="nav-icon">🏠</span><span>Home</span></button>
     <button data-view="trip" class="nav-item"><span class="nav-icon">🗺️</span><span>Trip</span></button>
+    <button data-view="discover" class="nav-item"><span class="nav-icon">✨</span><span>Discover</span></button>
     <button data-view="bookings" class="nav-item"><span class="nav-icon">🎫</span><span>Bookings</span></button>
     <button data-view="todos" class="nav-item"><span class="nav-icon">✅</span><span>To-dos</span><span id="todo-count" class="nav-count" hidden></span></button>
     <button data-view="profile" class="nav-item"><span class="nav-icon">👤</span><span>Profile</span></button>
@@ -115,6 +116,51 @@
       <ol id="booking-list"></ol>
       <p id="bookings-empty" class="empty">No bookings yet. Add flights, trains and places you're staying, with confirmation numbers, so everything's in one place on travel day.</p>
     </div>
+  </section>
+
+  <!-- Discover: free recommendations from Wikivoyage, ranked by the travel profile -->
+  <section id="view-discover" class="view page" hidden>
+    <div class="page-head">
+      <div>
+        <h2>Discover</h2>
+        <p class="muted">Things to see, do, eat and drink at each stop, ranked by your travel profile.</p>
+      </div>
+    </div>
+
+    <div class="card discover-controls">
+      <label>Stop <select id="discover-stop"></select></label>
+      <label>Guide for
+        <div class="search-row">
+          <input id="discover-place" placeholder="City name" />
+          <button type="button" id="discover-go" class="ghost">Search</button>
+        </div>
+      </label>
+    </div>
+
+    <p id="discover-profile-hint" class="profile-hint" hidden>
+      Answer the <button class="link" data-goto="profile">travel quiz</button> to rank these by what you love.
+    </p>
+
+    <section id="wishlist-card" class="card" hidden>
+      <div class="card-head"><h2 id="wishlist-title">★ Your wishlist</h2></div>
+      <ul id="wishlist-list" class="task-list"></ul>
+    </section>
+
+    <div class="filters discover-filters" id="discover-filters">
+      <button data-cat="all" class="chip active">For you</button>
+      <button data-cat="see" class="chip">🏛 See</button>
+      <button data-cat="do" class="chip">🎟️ Do</button>
+      <button data-cat="eat" class="chip">🍽 Eat</button>
+      <button data-cat="drink" class="chip">🍷 Drink</button>
+      <button data-cat="buy" class="chip">🛍 Shop</button>
+    </div>
+    <p id="discover-status" class="empty" hidden></p>
+    <ul id="discover-list" class="discover-list"></ul>
+    <button type="button" id="discover-more" class="ghost more-btn" hidden>Show more</button>
+    <p class="muted small-print discover-credit">
+      Recommendations come from <a id="discover-source" href="https://en.wikivoyage.org" target="_blank" rel="noopener">Wikivoyage</a>,
+      the free travel guide written by travelers (CC BY-SA). Check opening hours and prices before you go.
+    </p>
   </section>
 
   <!-- To-dos -->
