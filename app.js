@@ -1896,8 +1896,12 @@ let user = null;
 let turningOff = false; // the user chose to turn encryption off, so a readable upload may replace the encrypted copy
 let serverReady = false; // the database has the encryption update (share_data column)
 async function checkServer() {
-  const { data: version } = await sb.rpc('wanderlog_schema_version').catch(() => ({}));
-  serverReady = version >= 2;
+  try {
+    const { data: version } = await sb.rpc('wanderlog_schema_version');
+    serverReady = version >= 2;
+  } catch {
+    serverReady = false; // offline: checked again on the next sign-in or reload
+  }
 }
 let trip = null;         // { id, owner_id, share_token } of the cloud trip this device follows
 let busy = false;        // a sync is in flight
