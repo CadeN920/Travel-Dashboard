@@ -26,21 +26,21 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="logo">✈︎</span>
+      <span class="logo"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5c.8 0 1.4.7 1.4 1.5v5.2l7.1 4.3v2.2l-7.1-2.3v5l2.3 1.8v1.4L12 20.8l-3.7.8v-1.4l2.3-1.8v-5l-7.1 2.3v-2.2l7.1-4.3V4c0-.8.6-1.5 1.4-1.5z"/></svg></span>
       <span class="wordmark">Wanderlog</span>
     </div>
     <div class="actions">
-      <button id="btn-sync" class="ghost" hidden>☁︎ Sign in to sync</button>
-      <button id="btn-lock" class="ghost icon" title="Lock now (encrypted)" hidden>🔒</button>
-      <button id="btn-share" class="ghost" title="Share" hidden>👥 <span class="label">Share</span></button>
+      <button id="btn-sync" class="ghost" hidden>Sign in to sync</button>
+      <button id="btn-lock" class="ghost icon" title="Lock now (encrypted)" aria-label="Lock now" hidden><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
+      <button id="btn-share" class="ghost" title="Share" hidden><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .6 3.5 2.3 3.5 5.2"/></svg> <span class="label">Share</span></button>
       <div class="more">
         <button id="btn-more" class="ghost icon" title="More" aria-haspopup="menu" aria-expanded="false">⋯</button>
         <div id="more-menu" class="dropdown" role="menu" hidden>
-          <button id="btn-settings" role="menuitem">⚙︎ Trip settings</button>
-          <button id="btn-crypto" role="menuitem">🔒 Encryption · <span id="crypto-status">Off</span></button>
-          <button id="btn-export" role="menuitem">⬇︎ Export backup</button>
+          <button id="btn-settings" role="menuitem">Trip settings</button>
+          <button id="btn-crypto" role="menuitem">Encryption · <span id="crypto-status">Off</span></button>
+          <button id="btn-export" role="menuitem">Export backup</button>
           <label class="button" role="menuitem">
-            ⬆︎ Import backup <input id="file-import" type="file" accept="application/json" hidden />
+            Import backup <input id="file-import" type="file" accept="application/json" hidden />
           </label>
         </div>
       </div>
@@ -49,7 +49,7 @@
   </header>
 
   <nav class="nav" id="nav" aria-label="Sections">
-    <div class="nav-brand"><span class="logo">✈︎</span><span>Wanderlog</span></div>
+    <div class="nav-brand"><span class="logo"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5c.8 0 1.4.7 1.4 1.5v5.2l7.1 4.3v2.2l-7.1-2.3v5l2.3 1.8v1.4L12 20.8l-3.7.8v-1.4l2.3-1.8v-5l-7.1 2.3v-2.2l7.1-4.3V4c0-.8.6-1.5 1.4-1.5z"/></svg></span><span>Wanderlog</span></div>
     <button data-view="home" class="nav-item active"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span></button>
     <button data-view="trip" class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></svg><span>Trip</span></button>
     <button data-view="discover" class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.8 4.7 4.7 1.8-4.7 1.8L12 16l-1.8-4.7-4.7-1.8 4.7-1.8z"/><path d="m19 15 .8 2.2 2.2.8-2.2.8L19 21l-.8-2.2-2.2-.8 2.2-.8z"/></svg><span>Discover</span></button>
@@ -81,7 +81,7 @@
     </section>
 
     <button id="quiz-banner" class="quiz-banner" data-goto="profile" hidden>
-      <span class="quiz-emoji">✨</span>
+      <span class="quiz-emoji"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.8 4.7 4.7 1.8-4.7 1.8L12 16l-1.8-4.7-4.7-1.8 4.7-1.8z"/><path d="m19 15 .8 2.2 2.2.8-2.2.8L19 21l-.8-2.2-2.2-.8 2.2-.8z"/></svg></span>
       <span><strong>Personalize your trip.</strong> Take the 1-minute travel quiz so recommendations fit how you like to travel.</span>
       <span class="quiz-arrow">→</span>
     </button>
@@ -91,6 +91,20 @@
     <section id="gauges" class="gauges" aria-label="Trip at a glance"></section>
 
     <div class="dash-grid">
+      <section class="card span-6">
+        <div class="card-head">
+          <h2>Needs attention</h2>
+          <button class="link" data-goto="todos">All to-dos →</button>
+        </div>
+        <ul id="attention-list" class="task-list"></ul>
+      </section>
+      <section class="card span-6">
+        <div class="card-head">
+          <h2>Coming up</h2>
+          <button class="link" data-goto="trip">Open map →</button>
+        </div>
+        <ul id="upcoming-list" class="upcoming-list"></ul>
+      </section>
       <section class="card span-7">
         <div class="card-head">
           <h2>Nights per month</h2>
@@ -108,20 +122,6 @@
         </div>
         <div id="calendar" class="calendar"></div>
         <p id="cal-key" class="muted progress-label cal-key"></p>
-      </section>
-      <section class="card span-6">
-        <div class="card-head">
-          <h2>Needs attention</h2>
-          <button class="link" data-goto="todos">All to-dos →</button>
-        </div>
-        <ul id="attention-list" class="task-list"></ul>
-      </section>
-      <section class="card span-6">
-        <div class="card-head">
-          <h2>Coming up</h2>
-          <button class="link" data-goto="trip">Open map →</button>
-        </div>
-        <ul id="upcoming-list" class="upcoming-list"></ul>
       </section>
       <section class="card span-7">
         <div class="card-head">
@@ -204,11 +204,11 @@
 
     <div class="filters discover-filters" id="discover-filters">
       <button data-cat="all" class="chip active">For you</button>
-      <button data-cat="see" class="chip">🏛 See</button>
-      <button data-cat="do" class="chip">🎟️ Do</button>
-      <button data-cat="eat" class="chip">🍽 Eat</button>
-      <button data-cat="drink" class="chip">🍷 Drink</button>
-      <button data-cat="buy" class="chip">🛍 Shop</button>
+      <button data-cat="see" class="chip">See</button>
+      <button data-cat="do" class="chip">Do</button>
+      <button data-cat="eat" class="chip">Eat</button>
+      <button data-cat="drink" class="chip">Drink</button>
+      <button data-cat="buy" class="chip">Shop</button>
     </div>
     <p id="discover-status" class="empty" hidden></p>
     <ul id="discover-list" class="discover-list"></ul>
@@ -235,7 +235,7 @@
     <section id="schengen-card" class="card" hidden></section>
     <div class="card flush">
       <ul id="todo-list" class="task-list"></ul>
-      <p id="todos-empty" class="empty" hidden>You're all caught up. 🎉</p>
+      <p id="todos-empty" class="empty" hidden>You're all caught up.</p>
     </div>
     <details id="done-section" class="done-section" hidden>
       <summary id="done-summary">Done</summary>
@@ -291,9 +291,9 @@
         <label>Longitude <input name="lng" type="number" step="any" required /></label>
         <label>Status
           <select name="status">
-            <option value="booked">✅ Booked</option>
-            <option value="tentative">✏️ Tentative</option>
-            <option value="idea">💡 Idea (no dates yet)</option>
+            <option value="booked">Booked</option>
+            <option value="tentative">Tentative</option>
+            <option value="idea">Idea (no dates yet)</option>
           </select>
         </label>
         <label>Leg <input name="leg" placeholder="e.g. Leg 2 · Balkans" /></label>
@@ -309,11 +309,11 @@
         <label>Transport here
           <select name="transport">
             <option value="">—</option>
-            <option>✈️ Plane</option>
-            <option>🚆 Train</option>
-            <option>🚌 Bus</option>
-            <option>⛴️ Ferry</option>
-            <option>🚗 Car</option>
+            <option>Plane</option>
+            <option>Train</option>
+            <option>Bus</option>
+            <option>Ferry</option>
+            <option>Car</option>
           </select>
         </label>
       </div>
@@ -345,12 +345,12 @@
       <div class="grid2">
         <label>Type
           <select name="type">
-            <option value="flight">✈️ Flight</option>
-            <option value="train">🚆 Train</option>
-            <option value="bus">🚌 Bus</option>
-            <option value="ferry">⛴️ Ferry</option>
-            <option value="stay">🏠 Stay</option>
-            <option value="activity">🎟️ Activity / other</option>
+            <option value="flight">Flight</option>
+            <option value="train">Train</option>
+            <option value="bus">Bus</option>
+            <option value="ferry">Ferry</option>
+            <option value="stay">Stay</option>
+            <option value="activity">Activity / other</option>
           </select>
         </label>
         <label>Stop <select name="stopId"></select></label>
@@ -436,7 +436,7 @@
   <!-- Unlock an encrypted trip -->
   <dialog id="lock-dialog" class="lock-dialog">
     <form id="lock-form" method="dialog">
-      <div class="lock-badge">🔒</div>
+      <div class="lock-badge"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
       <h2>Your trip is encrypted</h2>
       <p class="muted">Enter your passphrase to unlock it on this device. It never leaves this device.</p>
       <label>Passphrase <input name="pass" type="password" autocomplete="current-password" required /></label>
@@ -454,7 +454,7 @@
   <!-- Encryption settings -->
   <dialog id="crypto-dialog">
     <form id="crypto-form" method="dialog">
-      <h2>🔒 Encryption</h2>
+      <h2>Encryption</h2>
       <div id="crypto-off" class="stack">
         <p>Lock your trip with a passphrase. It's encrypted on your device <em>before</em> it's saved or uploaded, so Supabase, and anyone who got into it, only ever sees scrambled data.</p>
         <ul class="crypto-points">
