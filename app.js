@@ -7,6 +7,28 @@ const DAY = 24 * 60 * 60 * 1000;
 // ---------- helpers ----------
 
 const $ = (sel) => document.querySelector(sel);
+
+// Line icons (no emojis): 24×24, drawn with the current text color.
+const ICONS = {
+  plane: '<path d="M12 2.5c.8 0 1.4.7 1.4 1.5v5.2l7.1 4.3v2.2l-7.1-2.3v5l2.3 1.8v1.4L12 20.8l-3.7.8v-1.4l2.3-1.8v-5l-7.1 2.3v-2.2l7.1-4.3V4c0-.8.6-1.5 1.4-1.5z"/>',
+  train: '<rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 11h14M9 14h.01M15 14h.01M8.5 21l2-4M15.5 21l-2-4"/>',
+  bus: '<rect x="4" y="3" width="16" height="15" rx="2.5"/><path d="M4 11h16M8 14.5h.01M16 14.5h.01M7 18v2.5M17 18v2.5"/>',
+  ferry: '<path d="M3 18.5c2 1.3 4 1.3 6 0s4-1.3 6 0 4 1.3 6 0M5 15.5 4 10h16l-1 5.5M8 10V6h8v4M12 3v3"/>',
+  car: '<path d="M5 17h14v-4.5L17 7H7l-2 5.5zM5 12.5h14M7.5 17v2.5M16.5 17v2.5M8 14.5h.01M16 14.5h.01"/>',
+  stay: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>',
+  ticket: '<path d="M3 7h18v3a2 2 0 0 0 0 4v3H3v-3a2 2 0 0 0 0-4z"/><path d="M14 7v2M14 11v2M14 15v2"/>',
+  pin: '<path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>',
+  cloud: '<path d="M7 18.5h10a4 4 0 0 0 .4-8 6 6 0 0 0-11.5 1.6A3.5 3.5 0 0 0 7 18.5z"/>',
+  alert: '<path d="M12 3 2.5 20h19z"/><path d="M12 10v4.5M12 17.5h.01"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .6 3.5 2.3 3.5 5.2"/>',
+};
+const icon = (name) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] ?? ICONS.ticket}</svg>`;
+// Older saved trips stored transport as e.g. "✈️ Plane"; keep just the words.
+const noEmoji = (t) => String(t ?? '')
+  .replace(/[\u{1F000}-\u{1FFFF}\u{2300}-\u{23FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0E}\u{FE0F}\u{200D}]/gu, '')
+  .replace(/\s+/g, ' ').trim();
+const transportIcon = (t) => icon({ plane: 'plane', flight: 'plane', train: 'train', bus: 'bus', ferry: 'ferry', boat: 'ferry', car: 'car' }[noEmoji(t).toLowerCase()] || 'plane');
 const uid = () => Math.random().toString(36).slice(2, 10);
 const toISO = (d) => d.toISOString().slice(0, 10);
 const parseDate = (s) => new Date(s + 'T00:00:00');
@@ -57,12 +79,8 @@ function countryCodeOf(s) {
   const code = COUNTRY_CODES[(s.country || '').trim().toLowerCase()] || (s.countryCode || '').toUpperCase();
   return /^[A-Z]{2}$/.test(code) ? code : '';
 }
-function flagFor(s) {
-  const code = countryCodeOf(s);
-  if (!code) return '';
-  const flag = String.fromCodePoint(...[...code].map((c) => 0x1f1a5 + c.charCodeAt(0)));
-  return `<span class="flag">${flag}</span>`;
-}
+// Flags were emojis; the design now uses region colors instead.
+const flagFor = () => '';
 
 // ---------- state ----------
 
@@ -106,6 +124,7 @@ function migrate(data) {
     s.lng = num(s.lng);
     s.rating = Math.max(0, Math.min(5, Math.round(num(s.rating))));
     ['name', 'country', 'notes', 'photo', 'transport', 'leg', 'arrive', 'depart'].forEach((k) => { s[k] = str(s[k]); });
+    s.transport = noEmoji(s.transport);
   });
   data.bookings = Array.isArray(data.bookings) ? data.bookings : [];
   data.bookings.forEach((b) => {
@@ -305,7 +324,7 @@ map.on('click', async (e) => {
 
 const pinIcon = (cls, label) => {
   // Wider pill for combined labels like "2·5".
-  const width = Math.max(26, 16 + String(label).length * 7);
+  const width = String(label).startsWith('<svg') ? 26 : Math.max(26, 16 + String(label).length * 7);
   return L.divIcon({
     className: '',
     html: `<div class="pin ${cls}">${label}</div>`,
@@ -374,7 +393,7 @@ function renderMap(fit = false) {
   });
 
   if (home) {
-    L.marker([home.lat, home.lng], { icon: pinIcon('home', '🏠') })
+    L.marker([home.lat, home.lng], { icon: pinIcon('home', icon('stay')) })
       .addTo(markerLayer).bindPopup(`<strong>Home</strong> · ${escapeHTML(home.name)}`);
   }
 
@@ -436,7 +455,7 @@ function renderHeader() {
 
   // Big countdown on the right of the header.
   const [num, label] = elapsed < 0 ? [-elapsed, elapsed === -1 ? 'day to go' : 'days to go']
-    : elapsed >= total ? ['🎉', 'trip complete']
+    : elapsed >= total ? ['Done', 'trip complete']
     : [`Day ${elapsed + 1}`, `of ${total}`];
   $('#countdown-num').textContent = num;
   $('#countdown-label').textContent = label;
@@ -496,7 +515,7 @@ function renderStats() {
   const tiles = [
     [stops.length, 'Stops'],
     [countries.size, 'Countries'],
-    [Math.round(routeKm(stops)).toLocaleString() + ' km', 'Distance'],
+    [new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(routeKm(stops)) + ' km', 'Distance'],
     [nights, 'Nights planned'],
     ideaStops().length && [ideaStops().length, 'Ideas to plan'],
     fav && [escapeHTML(fav.name), 'Top rated'],
@@ -508,10 +527,11 @@ function renderStats() {
 
 // ---------- itinerary list ----------
 
-function addListItem(className, text) {
+function addListItem(className, text, html = '') {
   const li = document.createElement('li');
   li.className = className;
   li.textContent = text;
+  if (html) li.insertAdjacentHTML('afterbegin', html);
   $('#stop-list').appendChild(li);
 }
 
@@ -561,16 +581,16 @@ function renderList() {
   $('#empty').hidden = stops.length + ideas.length > 0;
 
   if (home && stops.length && showLegs) {
-    addListItem('leg', `🏠 ${home.name} → ${stops[0].transport || '✈️'} ${km(home, stops[0])}`);
+    addListItem('leg', ` From ${home.name} · ${noEmoji(stops[0].transport) || 'Plane'} · ${km(home, stops[0])}`, transportIcon(stops[0].transport));
   }
   stops.forEach((s, i) => {
     if (filter !== 'all' && s.continent !== filter) return;
     if (s.leg && s.leg !== stops[i - 1]?.leg) addListItem('section-head', s.leg);
-    if (i > 0 && showLegs) addListItem('leg', `${s.transport || '↓'} ${km(stops[i - 1], s)}`);
+    if (i > 0 && showLegs) addListItem('leg', ` ${noEmoji(s.transport) || 'Travel'} · ${km(stops[i - 1], s)}`, transportIcon(s.transport));
     stopItem(s, i + 1);
   });
   if (home && stops.length && showLegs) {
-    addListItem('leg', `✈️ ${km(stops.at(-1), home)} → 🏠 Home to ${home.name}`);
+    addListItem('leg', ` Plane · ${km(stops.at(-1), home)} · home to ${home.name}`, icon('plane'));
   }
 
   const shownIdeas = ideas.filter((s) => filter === 'all' || s.continent === filter);
@@ -606,14 +626,14 @@ function render(fit = false) {
 // ---------- bookings: flights, trains, stays & confirmations ----------
 
 const BOOKING_TYPES = {
-  flight: { icon: '✈️', start: 'Departs', end: 'Arrives' },
-  train: { icon: '🚆', start: 'Departs', end: 'Arrives' },
-  bus: { icon: '🚌', start: 'Departs', end: 'Arrives' },
-  ferry: { icon: '⛴️', start: 'Departs', end: 'Arrives' },
-  stay: { icon: '🏠', start: 'Check-in', end: 'Check-out' },
-  activity: { icon: '🎟️', start: 'Starts', end: 'Ends' },
+  flight: { icon: 'plane', start: 'Departs', end: 'Arrives' },
+  train: { icon: 'train', start: 'Departs', end: 'Arrives' },
+  bus: { icon: 'bus', start: 'Departs', end: 'Arrives' },
+  ferry: { icon: 'ferry', start: 'Departs', end: 'Arrives' },
+  stay: { icon: 'stay', start: 'Check-in', end: 'Check-out' },
+  activity: { icon: 'ticket', start: 'Starts', end: 'Ends' },
 };
-const bookingIcon = (b) => BOOKING_TYPES[b.type]?.icon ?? '🎟️';
+const bookingIcon = (b) => icon(BOOKING_TYPES[b.type]?.icon ?? 'ticket');
 
 // Booking times are stored as typed ("2027-01-06T17:30"), in the local time
 // of the place, and shown the same way.
@@ -693,7 +713,7 @@ function bookingItem(b) {
           <button type="button" class="copy">Copy</button>` : ''}
       </div>` : ''}
       ${b.details ? `<div class="notes">${escapeHTML(b.details)}</div>` : ''}
-      ${b.address ? `<div class="notes"><a href="${mapsUrl}" target="_blank" rel="noopener noreferrer">📍 ${escapeHTML(b.address)}</a></div>` : ''}
+      ${b.address ? `<div class="notes"><a href="${mapsUrl}" target="_blank" rel="noopener noreferrer">${icon('pin')} ${escapeHTML(b.address)}</a></div>` : ''}
       ${link ? `<div class="notes"><a href="${escapeHTML(link)}" target="_blank" rel="noopener noreferrer">Open booking ↗</a></div>` : ''}
       ${b.notes ? `<div class="notes">${escapeHTML(b.notes)}</div>` : ''}
       ${stop ? `<div class="meta">For: ${escapeHTML(stop.name)}</div>` : ''}
@@ -860,7 +880,7 @@ function autoTodos() {
     const from = i > 0 ? stops[i - 1].name : home?.name;
     const hasTransport = bookings.some((b) => isTransport(b) && (b.stopId === s.id || dayOf(b.end || b.start) === s.arrive));
     if (!hasTransport && from) {
-      const how = (s.transport || '').replace(/^\S+\s/, '').toLowerCase() || 'travel';
+      const how = noEmoji(s.transport).toLowerCase() || 'travel';
       add(`transport:${s.id}`, `Book ${how} to ${s.name}`, daysBefore(s.arrive, 30), {
         hint: `From ${from} · ${fmtDate(s.arrive)}`, stopId: s.id,
       });
@@ -1027,7 +1047,7 @@ function renderHome() {
   attention.innerHTML = '';
   const open = openTodos();
   open.slice(0, 5).forEach((x) => attention.appendChild(todoItem(x, { compact: true })));
-  if (!open.length) attention.innerHTML = '<li class="empty">Nothing needs attention right now. 🎉</li>';
+  if (!open.length) attention.innerHTML = '<li class="empty">Nothing needs attention right now.</li>';
   else if (open.length > 5) {
     const more = document.createElement('li');
     more.innerHTML = `<button class="link" data-goto="todos">+ ${open.length - 5} more</button>`;
@@ -1112,7 +1132,7 @@ function renderGauges() {
   const tripP = Math.max(0, Math.min(1, elapsed / total));
   const cards = [{
     label: 'Trip progress', p: tripP, value: pct(tripP), goto: 'trip',
-    sub: elapsed < 0 ? `Starts in ${plural(-elapsed, 'day')}` : elapsed >= total ? 'Trip complete 🎉' : `Day ${elapsed + 1} of ${total}`,
+    sub: elapsed < 0 ? `Starts in ${plural(-elapsed, 'day')}` : elapsed >= total ? 'Trip complete' : `Day ${elapsed + 1} of ${total}`,
   }];
   if (stops.length) {
     const booked = stops.filter((s) => s.status === 'booked').length;
@@ -1124,7 +1144,7 @@ function renderGauges() {
     const left = 90 - sch.max;
     cards.push({ label: 'Schengen days', p: sch.max / 90, value: `${sch.max}<small>/90</small>`,
       tone: left < 10 ? 'warn' : '', goto: readOnly ? '' : 'todos',
-      sub: left < 0 ? `⚠ ${plural(-left, 'day')} over the limit` : left < 10 ? `⚠ Only ${plural(left, 'day')} to spare` : `${plural(left, 'day')} to spare` });
+      sub: left < 0 ? `${plural(-left, 'day')} over the limit` : left < 10 ? `Only ${plural(left, 'day')} to spare` : `${plural(left, 'day')} to spare` });
   }
   if (!readOnly) {
     const all = allTodos();
@@ -1239,10 +1259,9 @@ function renderCountryBars() {
     byCountry.set(name.toLowerCase(), row);
   });
   let rows = [...byCountry.values()].filter((r) => r.nights > 0).sort((a, b) => b.nights - a.nights);
-  if (rows.length > 8) {
-    const rest = rows.slice(7);
-    rows = [...rows.slice(0, 7), { name: `${rest.length} more`, other: true, nights: rest.reduce((n, r) => n + r.nights, 0), stops: rest.flatMap((r) => r.stops) }];
-  }
+  // Show the top countries; the rest become one line of text instead of a giant bar.
+  const rest = rows.length > 8 ? rows.slice(7) : [];
+  if (rest.length) rows = rows.slice(0, 7);
   countryRows = rows;
   const max = Math.max(1, ...rows.map((r) => r.nights));
   $('#country-key').innerHTML = regionKey(CONTINENTS.filter((c) => rows.some((r) => r.stop?.continent === c)));
@@ -1252,7 +1271,8 @@ function renderCountryBars() {
         <span class="bar-label">${r.other ? '' : flagFor(r.stop)}${escapeHTML(r.name)}</span>
         <span class="bar-track"><span class="bar ${r.other ? 'other' : r.stop.continent}" style="width:${(r.nights / max) * 100}%"></span></span>
         <span class="bar-value">${r.nights}</span>
-      </div>`).join('')
+      </div>`).join('') + (rest.length
+      ? `<p class="muted bars-more">+ ${rest.length} more countries · ${rest.reduce((n, r) => n + r.nights, 0)} nights (${rest.map((r) => escapeHTML(r.name)).join(', ')})</p>` : '')
     : '<p class="empty">No nights planned yet.</p>';
 }
 $('#chart-countries').addEventListener('pointermove', (e) => {
@@ -1326,7 +1346,7 @@ $('#calendar').addEventListener('pointerleave', hideTip);
 const WV_API = 'https://en.wikivoyage.org/w/api.php';
 const WV_CACHE_DAYS = 7;
 const LISTING_TYPES = ['see', 'do', 'eat', 'drink', 'buy'];
-const TYPE_LABEL = { see: '🏛 See', do: '🎟️ Do', eat: '🍽 Eat', drink: '🍷 Drink', buy: '🛍 Shop' };
+const TYPE_LABEL = { see: 'See', do: 'Do', eat: 'Eat', drink: 'Drink', buy: 'Shop' };
 const discover = { stopId: null, place: '', listings: [], cat: 'all', shown: 20, loading: false, error: '' };
 
 async function wvFetch(titles) {
@@ -2099,24 +2119,24 @@ function sampleTrip() {
     return { id: uid(), name, country, lat, lng, arrive, depart: toISO(cursor), continent, transport, status: 'booked', rating: 0, notes: '', photo: '', ...extra };
   };
   const stops = [
-      leg('Lisbon', 'Portugal', 38.7223, -9.1393, 5, 'Europe', '✈️ Plane', { rating: 5, notes: 'Pastéis de nata every morning. Sunset at Miradouro da Senhora do Monte.' }),
-      leg('Barcelona', 'Spain', 41.3874, 2.1686, 5, 'Europe', '✈️ Plane', { rating: 4, notes: 'Sagrada Família blew my mind.' }),
-      leg('Paris', 'France', 48.8566, 2.3522, 4, 'Europe', '🚆 Train', { rating: 4 }),
-      leg('Amsterdam', 'Netherlands', 52.3676, 4.9041, 4, 'Europe', '🚆 Train', { rating: 4, notes: 'Biked everywhere.' }),
-      leg('Berlin', 'Germany', 52.52, 13.405, 5, 'Europe', '🚆 Train', { rating: 5 }),
-      leg('Prague', 'Czechia', 50.0755, 14.4378, 4, 'Europe', '🚌 Bus', { rating: 4 }),
-      leg('Vienna', 'Austria', 48.2082, 16.3738, 3, 'Europe', '🚆 Train', { rating: 3 }),
-      leg('Budapest', 'Hungary', 47.4979, 19.0402, 5, 'Europe', '🚆 Train', { notes: 'Thermal baths tomorrow!' }),
-      leg('Istanbul', 'Türkiye', 41.0082, 28.9784, 6, 'Europe', '✈️ Plane'),
-      leg('Delhi', 'India', 28.6139, 77.209, 4, 'Asia', '✈️ Plane'),
-      leg('Jaipur', 'India', 26.9124, 75.7873, 3, 'Asia', '🚆 Train'),
-      leg('Bangkok', 'Thailand', 13.7563, 100.5018, 6, 'Asia', '✈️ Plane'),
-      leg('Chiang Mai', 'Thailand', 18.7883, 98.9853, 6, 'Asia', '🚆 Train'),
-      leg('Hanoi', 'Vietnam', 21.0278, 105.8342, 5, 'Asia', '✈️ Plane'),
-      leg('Hoi An', 'Vietnam', 15.8801, 108.338, 5, 'Asia', '🚆 Train'),
-      leg('Seoul', 'South Korea', 37.5665, 126.978, 7, 'Asia', '✈️ Plane'),
-      leg('Tokyo', 'Japan', 35.6762, 139.6503, 8, 'Asia', '✈️ Plane'),
-      leg('Kyoto', 'Japan', 35.0116, 135.7681, 5, 'Asia', '🚆 Train'),
+      leg('Lisbon', 'Portugal', 38.7223, -9.1393, 5, 'Europe', 'Plane', { rating: 5, notes: 'Pastéis de nata every morning. Sunset at Miradouro da Senhora do Monte.' }),
+      leg('Barcelona', 'Spain', 41.3874, 2.1686, 5, 'Europe', 'Plane', { rating: 4, notes: 'Sagrada Família blew my mind.' }),
+      leg('Paris', 'France', 48.8566, 2.3522, 4, 'Europe', 'Train', { rating: 4 }),
+      leg('Amsterdam', 'Netherlands', 52.3676, 4.9041, 4, 'Europe', 'Train', { rating: 4, notes: 'Biked everywhere.' }),
+      leg('Berlin', 'Germany', 52.52, 13.405, 5, 'Europe', 'Train', { rating: 5 }),
+      leg('Prague', 'Czechia', 50.0755, 14.4378, 4, 'Europe', 'Bus', { rating: 4 }),
+      leg('Vienna', 'Austria', 48.2082, 16.3738, 3, 'Europe', 'Train', { rating: 3 }),
+      leg('Budapest', 'Hungary', 47.4979, 19.0402, 5, 'Europe', 'Train', { notes: 'Thermal baths tomorrow!' }),
+      leg('Istanbul', 'Türkiye', 41.0082, 28.9784, 6, 'Europe', 'Plane'),
+      leg('Delhi', 'India', 28.6139, 77.209, 4, 'Asia', 'Plane'),
+      leg('Jaipur', 'India', 26.9124, 75.7873, 3, 'Asia', 'Train'),
+      leg('Bangkok', 'Thailand', 13.7563, 100.5018, 6, 'Asia', 'Plane'),
+      leg('Chiang Mai', 'Thailand', 18.7883, 98.9853, 6, 'Asia', 'Train'),
+      leg('Hanoi', 'Vietnam', 21.0278, 105.8342, 5, 'Asia', 'Plane'),
+      leg('Hoi An', 'Vietnam', 15.8801, 108.338, 5, 'Asia', 'Train'),
+      leg('Seoul', 'South Korea', 37.5665, 126.978, 7, 'Asia', 'Plane'),
+      leg('Tokyo', 'Japan', 35.6762, 139.6503, 8, 'Asia', 'Plane'),
+      leg('Kyoto', 'Japan', 35.0116, 135.7681, 5, 'Asia', 'Train'),
   ];
   const istanbul = stops[8];
   const delhi = stops[9];
@@ -2192,19 +2212,18 @@ function sameTrip(a, b) {
 }
 
 const SYNC_LABELS = {
-  'signed-out': ['☁︎ Sign in to sync', ''],
-  saving: ['☁︎ Saving…', ''],
-  synced: ['☁︎ Synced', 'synced'],
-  offline: ['☁︎ Offline — will sync', 'problem'],
-  error: ['⚠︎ Sync problem', 'problem'],
+  'signed-out': ['Sign in to sync', ''],
+  saving: ['Saving…', ''],
+  synced: ['Synced', 'synced'],
+  offline: ['Offline — will sync', 'problem'],
+  error: ['Sync problem', 'problem'],
 };
 
 function setSyncState(name) {
   const [label, cls] = SYNC_LABELS[name];
   const btn = $('#btn-sync');
   // Icon stays visible on phones; the words hide on narrow screens.
-  const [icon, ...words] = label.split(' ');
-  btn.innerHTML = `${icon} <span class="label">${words.join(' ')}</span>`;
+  btn.innerHTML = `${icon(name === 'error' ? 'alert' : 'cloud')} <span class="label">${label}</span>`;
   btn.title = label;
   btn.className = `ghost ${cls}`;
   $('#btn-share').hidden = !user;
@@ -2746,7 +2765,7 @@ async function startViewOnly() {
           return;
         }
       }
-      banner.textContent = '👀 View only — this trip was shared with you.';
+      banner.textContent = 'View only — this trip was shared with you.';
       if (first || !sameTrip(data, state)) {
         state = migrate(data);
         render(first);

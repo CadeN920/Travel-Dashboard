@@ -755,7 +755,8 @@ dialog::backdrop { background: rgba(6, 3, 16, .7); backdrop-filter: blur(4px); }
 .next-label { color: var(--accent-2); }
 
 /* ring gauges */
-.gauges { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; padding: 18px 24px 0; }
+.gauges { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 18px 24px 0; }
+@media (min-width: 1340px) { .gauges { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .gauge {
   display: flex; align-items: center; gap: 16px; text-align: left; white-space: normal;
   padding: 16px 18px; border-radius: var(--radius); color: var(--ink); font-weight: 400;
@@ -773,7 +774,7 @@ button.gauge:hover { background: linear-gradient(180deg, rgba(255, 255, 255, .02
 }
 .gauge-value small { font-size: .6em; font-weight: 600; color: var(--muted); margin: .35em 0 0 1px; }
 .gauge-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.gauge-label { font-weight: 650; font-size: .95rem; }
+.gauge-label { font-weight: 650; font-size: .95rem; white-space: nowrap; }
 .gauge-sub { font-size: .82rem; color: var(--muted); }
 .gauge.warn .gauge-sub { color: var(--warn); }
 
@@ -878,8 +879,9 @@ button.gauge:hover { background: linear-gradient(180deg, rgba(255, 255, 255, .02
 .meter.over > div { background: var(--danger); }
 .pill { background: var(--panel-2); }
 
-@media (max-width: 1100px) {
+@media (max-width: 960px) {
   .span-7, .span-5 { grid-column: span 12; }
+  .calendar { max-width: 520px; margin-left: auto; margin-right: auto; }
 }
 @media (max-width: 860px) {
   .gauges { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 14px 16px 0; }
@@ -890,3 +892,27 @@ button.gauge:hover { background: linear-gradient(180deg, rgba(255, 255, 255, .02
   .span-7, .span-6, .span-5 { grid-column: auto; }
   .nav { box-shadow: 0 -8px 24px rgba(0, 0, 0, .4); }
 }
+
+/* line icons */
+.i {
+  width: 1.1em; height: 1.1em; flex-shrink: 0; vertical-align: -.2em;
+  fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+button .i { margin-right: 2px; }
+.logo .i { width: 18px; height: 18px; stroke: #fff; stroke-width: 1.7; vertical-align: middle; }
+.icon .i { width: 18px; height: 18px; margin: 0; }
+#btn-sync .i { margin-right: 4px; }
+.quiz-emoji .i { width: 24px; height: 24px; color: var(--accent); vertical-align: middle; }
+.lock-badge .i { width: 34px; height: 34px; color: var(--accent); }
+.next-title .i, .b-icon .i { color: var(--accent-2); }
+.b-icon .i { width: 20px; height: 20px; }
+.bchip .i { width: 14px; height: 14px; color: var(--accent-2); }
+.leg .i { width: 14px; height: 14px; margin-right: 6px; color: var(--muted); }
+.booking a .i { width: 14px; height: 14px; }
+.pin.home { color: #1d1536; }
+.pin.home .i { width: 14px; height: 14px; stroke-width: 2.2; }
+
+/* "Next up" cards fill the row */
+.next-up { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.next-card { max-width: none; }
+.bars-more { margin: 4px 0 0; font-size: .82rem; }
