@@ -94,6 +94,8 @@ function defaultState() {
     todoState: {},
     profile: {},
     wishlist: [],
+    money: { budget: null, expenses: [] },
+    asiaPlan: null,
   };
 }
 
@@ -103,6 +105,7 @@ function defaultState() {
 // tampered value must never be able to inject markup or script.
 const CONTINENTS = ['Europe', 'Africa', 'Asia'];
 const STOP_STATUSES = ['booked', 'tentative', 'idea'];
+const EXPENSE_CATS = { stay: 'Stays', food: 'Food & drink', local: 'Getting around', fun: 'Activities', travel: 'Travel between stops', other: 'Other' };
 const BOOKING_TYPE_IDS = ['flight', 'train', 'bus', 'ferry', 'stay', 'activity'];
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const str = (v) => (v == null ? '' : String(v));
@@ -139,6 +142,31 @@ function migrate(data) {
   data.todos ??= [];        // your own tasks
   data.todoState ??= {};    // suggested reminders you've ticked off or dismissed
   data.profile ??= {};      // travel-preferences quiz answers
+  // Budget: an optional total (US$) and the spending log.
+  const m = data.money && typeof data.money === 'object' ? data.money : {};
+  data.money = {
+    budget: m.budget == null || m.budget === '' ? null : Math.max(0, num(m.budget)),
+    expenses: (Array.isArray(m.expenses) ? m.expenses : []).filter((e) => e && typeof e === 'object').slice(0, 5000).map((e) => ({
+      id: str(e.id) || uid(),
+      date: isDay(str(e.date)) ? str(e.date) : toISO(today()),
+      amount: Math.max(0, num(e.amount)),
+      currency: /^[A-Z]{3}$/.test(str(e.currency)) ? str(e.currency) : 'USD',
+      usd: Math.max(0, num(e.usd)),
+      category: Object.hasOwn(EXPENSE_CATS, e.category) ? e.category : 'other',
+      stopId: str(e.stopId),
+      note: str(e.note).slice(0, 200),
+    })),
+  };
+  // Asia leg planner draft.
+  const ap = data.asiaPlan;
+  data.asiaPlan = ap && typeof ap === 'object' && Array.isArray(ap.stops) ? {
+    start: isDay(str(ap.start)) ? str(ap.start) : '',
+    end: isDay(str(ap.end)) ? str(ap.end) : '',
+    stops: ap.stops.filter((x) => x && typeof x === 'object').slice(0, 40).map((x) => ({
+      name: str(x.name).slice(0, 80), country: str(x.country).slice(0, 60), lat: num(x.lat), lng: num(x.lng),
+      nights: Math.max(1, Math.min(60, Math.round(num(x.nights)) || 1)),
+    })),
+  } : null;
   return data;
 }
 
@@ -196,7 +224,7 @@ const sealTrip = (obj) => sealWith(vault.key, obj, { kdf: 'PBKDF2-SHA256', iter:
 // The family link's snapshot: no booking codes, links or notes, no to-dos,
 // profile, wishlist or the snapshot key itself.
 function familySnapshot(s) {
-  const { todos, todoState, profile, wishlist, shareKey, ...rest } = s;
+  const { todos, todoState, profile, wishlist, shareKey, money, asiaPlan, ...rest } = s;
   return { ...rest, bookings: (s.bookings || []).map(({ confirmation, link, notes, ...b }) => b) };
 }
 const newShareKey = () => toB64url(crypto.getRandomValues(new Uint8Array(32)));
@@ -297,9 +325,9 @@ const canvas = 'Dark'; // the app is always dark
 const esriUrl = (layer) => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_${canvas}_Gray_${layer}/MapServer/tile/{z}/{y}/{x}`;
 const esriTiles = L.tileLayer(esriUrl('Base'), {
   attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
-  maxNativeZoom: 16, maxZoom: 18,
+  maxNativeZoom: 16, maxZoom: 18, crossOrigin: true, // CORS tiles can be cached for offline use
 }).addTo(map);
-const esriLabels = L.tileLayer(esriUrl('Reference'), { maxNativeZoom: 16, maxZoom: 18 }).addTo(map);
+const esriLabels = L.tileLayer(esriUrl('Reference'), { maxNativeZoom: 16, maxZoom: 18, crossOrigin: true }).addTo(map);
 
 let tileErrors = 0;
 esriTiles.on('tileerror', () => {
@@ -308,7 +336,7 @@ esriTiles.on('tileerror', () => {
   map.removeLayer(esriLabels);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors',
-    maxZoom: 18,
+    maxZoom: 18, crossOrigin: true,
   }).addTo(map);
 });
 
@@ -518,6 +546,7 @@ function renderStats() {
     [new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(routeKm(stops)) + ' km', 'Distance'],
     [nights, 'Nights planned'],
     ideaStops().length && [ideaStops().length, 'Ideas to plan'],
+    !readOnly && stops.length && [usdShort(predictCost(stops).total), 'Est. trip cost'],
     fav && [escapeHTML(fav.name), 'Top rated'],
   ].filter(Boolean);
   $('#stats').innerHTML = tiles
@@ -618,6 +647,8 @@ function render(fit = false) {
   renderTodos();
   renderHome();
   renderProfile();
+  renderBudget();
+  if (!$('#view-planner').hidden) renderPlanner();
   renderCryptoStatus();
   if (!$('#view-discover').hidden) renderDiscover();
   renderMap(fit);
@@ -753,15 +784,18 @@ function renderBookings() {
 
 // ---------- views: Home · Trip · Bookings · To-dos · Profile ----------
 
-const VIEWS = ['home', 'trip', 'discover', 'bookings', 'todos', 'profile'];
-const PRIVATE_VIEWS = ['discover', 'todos', 'profile']; // not shown on the family link
+const VIEWS = ['home', 'trip', 'discover', 'bookings', 'budget', 'todos', 'profile', 'planner'];
+const PRIVATE_VIEWS = ['discover', 'budget', 'todos', 'profile', 'planner']; // not shown on the family link
 
 function showView(name) {
   if (!VIEWS.includes(name) || (readOnly && PRIVATE_VIEWS.includes(name))) name = 'home';
   VIEWS.forEach((v) => { $(`#view-${v}`).hidden = v !== name; });
-  document.querySelectorAll('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
+  const navName = name === 'planner' ? 'trip' : name;
+  document.querySelectorAll('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === navName));
   window.scrollTo({ top: 0 });
   if (name === 'discover') openDiscover();
+  if (name === 'budget') refreshRates();
+  if (name === 'planner') renderPlanner();
 }
 // The URL hash remembers the tab (#trip, #todos, …) so back/forward and refresh work.
 function goTo(name) {
@@ -1335,6 +1369,474 @@ $('#calendar').addEventListener('pointermove', (e) => {
     : `<span class="tip-sub">${day >= state.trip.start && day <= state.trip.end ? 'Travel / no stay planned' : 'Outside the trip'}</span>`}`);
 });
 $('#calendar').addEventListener('pointerleave', hideTip);
+
+// ---------- Budget: a predicted trip cost, plus what you actually spend ----------
+//
+// The estimate uses typical daily costs (US$ per person) for a student
+// traveler: shared apartments or private hostel rooms, eating out most meals,
+// local transport and paid sights. It's adjusted by the budget answer in the
+// travel profile, plus an estimate for each journey between stops.
+
+const COUNTRY_COST = {
+  ES: 80, PT: 70, MA: 45, IT: 95, CZ: 65, AT: 95, HU: 60, SI: 75, HR: 80, ME: 60, AL: 45,
+  VN: 35, KH: 35, LA: 32, PH: 45, FR: 110, DE: 95, NL: 115, BE: 100, GR: 80, TR: 50, PL: 55,
+  SK: 60, BA: 50, RS: 50, MK: 45, CH: 160, GB: 120, IE: 110, TH: 40, JP: 100, KR: 80, IN: 28,
+  ID: 40, MY: 45, SG: 120, MX: 55, US: 150,
+};
+const REGION_COST = { Europe: 85, Africa: 45, Asia: 40 };
+const EURO_ZONE = ['AT', 'BE', 'HR', 'CY', 'EE', 'FI', 'FR', 'DE', 'GR', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL',
+  'PT', 'SK', 'SI', 'ES', 'ME', 'XK', 'AD', 'MC', 'SM', 'VA'];
+const COUNTRY_CURRENCY = {
+  MA: 'MAD', CZ: 'CZK', HU: 'HUF', AL: 'ALL', VN: 'VND', KH: 'USD', LA: 'LAK', PH: 'PHP', TR: 'TRY',
+  PL: 'PLN', BA: 'BAM', RS: 'RSD', MK: 'MKD', CH: 'CHF', GB: 'GBP', TH: 'THB', JP: 'JPY', KR: 'KRW',
+  IN: 'INR', ID: 'IDR', MY: 'MYR', SG: 'SGD', MX: 'MXN', US: 'USD', CA: 'CAD',
+};
+// Approximate units per US$, used only until live rates have loaded once.
+const FALLBACK_RATES = {
+  USD: 1, EUR: 0.92, MAD: 10, CZK: 23, HUF: 360, ALL: 93, VND: 25400, KHR: 4100, LAK: 21500, PHP: 57,
+  TRY: 34, PLN: 4, BAM: 1.8, RSD: 108, MKD: 57, CHF: 0.88, GBP: 0.78, THB: 35, JPY: 150, KRW: 1370,
+  INR: 84, IDR: 15800, MYR: 4.5, SGD: 1.35, MXN: 18, CAD: 1.37,
+};
+const DAILY_SPLIT = { stay: 0.42, food: 0.3, local: 0.1, fun: 0.18 };
+const usd = (n) => `$${Math.round(n).toLocaleString('en-US')}`;
+const usdShort = (n) => `$${new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(n)}`;
+const styleFactor = () => ({ Shoestring: 0.75, 'Happy to splurge sometimes': 1.35 }[state.profile.budget] ?? 1);
+const currencyFor = (s) => {
+  const code = s ? countryCodeOf(s) : '';
+  return EURO_ZONE.includes(code) ? 'EUR' : COUNTRY_CURRENCY[code] || 'USD';
+};
+const dailyCost = (s) => (COUNTRY_COST[countryCodeOf(s)] ?? REGION_COST[s.continent] ?? 70) * styleFactor();
+
+function travelMode(from, to, transport) {
+  const mode = noEmoji(transport).toLowerCase();
+  if (['plane', 'train', 'bus', 'ferry', 'car'].includes(mode)) return mode;
+  return haversine(from, to) > 500 ? 'plane' : 'bus';
+}
+function journeyCost(from, to, transport) {
+  const km = haversine(from, to);
+  const mode = travelMode(from, to, transport);
+  if (mode === 'train') return Math.max(15, km * 0.13);
+  if (mode === 'bus') return Math.max(8, km * 0.06);
+  if (mode === 'ferry') return 45;
+  if (mode === 'car') return km * 0.12;
+  return Math.max(60, 45 + km * 0.075);
+}
+
+function predictCost(stops, from = state.trip.home, backTo = state.trip.home) {
+  const byCat = { stay: 0, food: 0, local: 0, fun: 0, travel: 0 };
+  const rows = stops.map((s, i) => {
+    const nights = Math.max(0, s.nights ?? daysBetween(s.arrive, s.depart));
+    const daily = dailyCost(s);
+    const prev = i ? stops[i - 1] : from;
+    const travel = prev ? journeyCost(prev, s, s.transport) : 0;
+    Object.entries(DAILY_SPLIT).forEach(([k, f]) => { byCat[k] += daily * nights * f; });
+    byCat.travel += travel;
+    return { stop: s, nights, daily, travel, cost: daily * nights + travel };
+  });
+  if (backTo && stops.length) byCat.travel += journeyCost(stops.at(-1), backTo, 'plane');
+  return { rows, byCat, total: Object.values(byCat).reduce((a, b) => a + b, 0) };
+}
+
+const RATES_KEY = 'wanderlog-rates';
+let liveRates = null;
+try { liveRates = JSON.parse(localStorage.getItem(RATES_KEY))?.rates ? JSON.parse(localStorage.getItem(RATES_KEY)) : null; } catch { liveRates = null; }
+const rateFor = (cur) => liveRates?.rates?.[cur] ?? FALLBACK_RATES[cur] ?? null;
+async function refreshRates() {
+  if (liveRates && Date.now() - liveRates.at < 12 * 3600e3) return;
+  try {
+    const r = await (await fetch('https://open.er-api.com/v6/latest/USD')).json();
+    if (r?.result !== 'success' || typeof r.rates !== 'object') return;
+    const clean = {};
+    Object.entries(r.rates).forEach(([k, v]) => { if (/^[A-Z]{3}$/.test(k) && Number(v) > 0) clean[k] = Number(v); });
+    liveRates = { at: Date.now(), rates: clean };
+    try { localStorage.setItem(RATES_KEY, JSON.stringify(liveRates)); } catch { /* private mode */ }
+    updateExpensePreview();
+  } catch { /* offline: keep the saved or built-in rates */ }
+}
+
+const stopOnDay = (day) => nightMap().get(day) ?? sortedStops().find((s) => s.depart === day) ?? null;
+const expenseStop = (e) => state.stops.find((s) => s.id === e.stopId) ?? stopOnDay(e.date);
+
+function renderBudget() {
+  if (readOnly) return;
+  const pred = predictCost(sortedStops());
+  const { money } = state;
+  const budget = money.budget ?? Math.round(pred.total);
+  const spent = money.expenses.reduce((n, e) => n + e.usd, 0);
+  const t = toISO(today());
+  const { start, end } = state.trip;
+  const before = t < start;
+  const daysLeft = Math.max(0, daysBetween(before ? start : t, end));
+  const left = budget - spent;
+  const share = budget ? spent / budget : 0;
+  const tip = left < 0
+    ? `You're ${usd(-left)} over budget.`
+    : daysLeft
+      ? `That leaves about <strong>${usd(left / daysLeft)} a day</strong> for the ${before ? '' : 'remaining '}${daysLeft} days${before ? ' of the trip' : ''}.`
+      : `${usd(left)} left.`;
+  $('#budget-hero').innerHTML = `
+    <span class="gauge-ring budget-ring">${ring(share, left < 0 ? 'warn' : '')}<span class="gauge-value">${Math.round(share * 100)}<small>%</small></span></span>
+    <div class="budget-nums">
+      <div class="budget-row"><span>Spent${before && spent ? ' (prepaid)' : ''}</span><strong>${usd(spent)}</strong></div>
+      <div class="budget-row"><span>Budget</span><strong>${usd(budget)}</strong></div>
+      <div class="budget-row ${left < 0 ? 'over' : ''}"><span>${left < 0 ? 'Over' : 'Left'}</span><strong>${usd(Math.abs(left))}</strong></div>
+      <p class="budget-tip">${tip}</p>
+    </div>`;
+  const input = $('#budget-input');
+  if (document.activeElement !== input) input.value = money.budget ?? '';
+  input.placeholder = `${Math.round(pred.total)} (the estimate)`;
+
+  $('#budget-estimate').textContent = usd(pred.total);
+  $('#budget-style').innerHTML = `Based on <strong>${escapeHTML(state.profile.budget || 'Moderate')}</strong> spending (from your <button class="link" data-goto="profile">travel profile</button>).`;
+  const catMax = Math.max(1, ...Object.values(pred.byCat));
+  $('#budget-cats').innerHTML = Object.entries(pred.byCat).map(([k, v]) => `
+    <div class="bar-row"><span class="bar-label">${EXPENSE_CATS[k]}</span>
+      <span class="bar-track"><span class="bar neon" style="width:${(v / catMax) * 100}%"></span></span>
+      <span class="bar-value wide">${usd(v)}</span></div>`).join('');
+
+  // Each stop: the estimate (track) and what you've logged for it (fill).
+  const spentBy = new Map();
+  money.expenses.forEach((e) => { const s = expenseStop(e); if (s) spentBy.set(s.id, (spentBy.get(s.id) || 0) + e.usd); });
+  const max = Math.max(1, ...pred.rows.map((r) => Math.max(r.cost, spentBy.get(r.stop.id) || 0)));
+  $('#budget-stops').innerHTML = pred.rows.length ? pred.rows.map((r) => {
+    const sp = spentBy.get(r.stop.id) || 0;
+    return `<div class="bar-row stop-cost" title="${escapeHTML(r.stop.name)}: about ${usd(r.daily)}/day × ${r.nights} nights + ${usd(r.travel)} to get there">
+      <span class="bar-label">${escapeHTML(r.stop.name)}</span>
+      <span class="bar-track est" style="--est:${(r.cost / max) * 100}%"><span class="bar neon${sp > r.cost ? ' over' : ''}" style="width:${(sp / max) * 100}%"></span></span>
+      <span class="bar-value wide">${sp ? `${usd(sp)} / ` : ''}${usd(r.cost)}</span></div>`;
+  }).join('') : '<p class="empty">Add stops with dates to get an estimate.</p>';
+
+  // The spending log, newest first.
+  const list = $('#expense-list');
+  const items = [...money.expenses].sort((a, b) => b.date.localeCompare(a.date) || 0);
+  $('#expense-total').textContent = items.length ? `${items.length} item${items.length === 1 ? '' : 's'} · ${usd(spent)}` : '';
+  // Only rebuild the log when it changed, so a tap on × isn't lost to a redraw.
+  const listKey = JSON.stringify(items.map((e) => [e.id, e.usd, e.note, expenseStop(e)?.name]));
+  if (list.dataset.key === listKey) return finishBudgetForm(t);
+  list.dataset.key = listKey;
+  list.innerHTML = items.length ? '' : '<li class="empty">Nothing logged yet. Add what you spend above, in any currency.</li>';
+  items.slice(0, 200).forEach((e) => {
+    const s = expenseStop(e);
+    const li = document.createElement('li');
+    li.className = 'task expense';
+    const orig = e.currency === 'USD' ? '' : ` · ${e.amount.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${e.currency}`;
+    li.innerHTML = `<span class="exp-cat">${EXPENSE_CATS[e.category].split(' ')[0]}</span>
+      <div><div class="task-text">${escapeHTML(e.note || EXPENSE_CATS[e.category])}</div>
+      <div class="task-meta">${fmtDate(e.date)}${s ? ` · ${escapeHTML(s.name)}` : ''}${orig}</div></div>
+      <span class="exp-amt">${usd(e.usd)}<button class="task-x" aria-label="Delete">×</button></span>`;
+    li.querySelector('.task-x').addEventListener('click', () => {
+      state.money.expenses = state.money.expenses.filter((x) => x.id !== e.id);
+      save();
+      render();
+    });
+    list.appendChild(li);
+  });
+  finishBudgetForm(t);
+}
+
+// Form choices: currencies on this trip and the stops.
+function finishBudgetForm(t) {
+  const form = $('#expense-form').elements;
+  const curs = [...new Set(['USD', 'EUR', ...sortedStops().map(currencyFor)])];
+  if (form.currency.dataset.list !== curs.join()) {
+    const keep = form.currency.value;
+    form.currency.innerHTML = curs.map((c) => `<option>${c}</option>`).join('');
+    form.currency.dataset.list = curs.join();
+    if (curs.includes(keep)) form.currency.value = keep;
+  }
+  const stopOpts = `<option value="">Stop on that date</option>${sortedStops().map((s) => `<option value="${escapeHTML(s.id)}">${escapeHTML(s.name)} · ${fmtDate(s.arrive)}</option>`).join('')}`;
+  if (form.stop.dataset.list !== stopOpts) {
+    const keep = form.stop.value;
+    form.stop.innerHTML = stopOpts;
+    form.stop.dataset.list = stopOpts;
+    form.stop.value = keep;
+  }
+  if (!form.date.value) form.date.value = t;
+  // The currency follows the stop on the chosen date, unless you picked one.
+  if (!form.currency.dataset.manual) setExpenseDate(form.date.value);
+  $('#budget-sql-note').hidden = !(user && !vault.key && serverVersion < 3);
+  updateExpensePreview();
+}
+
+function setExpenseDate(day) {
+  const form = $('#expense-form').elements;
+  form.date.value = day;
+  const cur = currencyFor(stopOnDay(day));
+  if ([...form.currency.options].some((o) => o.value === cur)) form.currency.value = cur;
+}
+function updateExpensePreview() {
+  const form = $('#expense-form')?.elements;
+  if (!form) return;
+  const amount = num(form.amount.value);
+  const rate = rateFor(form.currency.value);
+  $('#expense-preview').textContent = amount > 0 && form.currency.value !== 'USD' && rate
+    ? `≈ ${usd(amount / rate)}${liveRates ? '' : ' (approximate rate until online)'}` : '';
+}
+$('#expense-form').addEventListener('input', (e) => {
+  if (e.target.name === 'currency') e.target.dataset.manual = '1';
+  if (e.target.name === 'date' && e.target.value) {
+    delete e.target.form.elements.currency.dataset.manual;
+    setExpenseDate(e.target.value);
+  }
+  updateExpensePreview();
+});
+$('#expense-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const f = e.target.elements;
+  const amount = num(f.amount.value);
+  const rate = rateFor(f.currency.value);
+  if (!(amount > 0) || !rate) return;
+  state.money.expenses.push({
+    id: uid(), date: f.date.value || toISO(today()), amount, currency: f.currency.value,
+    usd: Math.round((amount / rate) * 100) / 100, category: f.category.value, stopId: f.stop.value,
+    note: f.note.value.trim().slice(0, 200),
+  });
+  f.amount.value = '';
+  f.note.value = '';
+  save();
+  render();
+  f.amount.focus();
+});
+$('#budget-input').addEventListener('change', (e) => {
+  const v = e.target.value.trim();
+  state.money.budget = v === '' ? null : Math.max(0, Math.round(num(v)));
+  save();
+  render();
+});
+
+// ---------- Asia leg planner ----------
+//
+// Try different routes for the Southeast Asia leg, see how the nights,
+// travel and cost add up, then put the one you like on the trip.
+
+const ASIA_PLACES = {
+  Vietnam: [['Ho Chi Minh City', 10.7769, 106.7009, 'Street food, Cu Chi tunnels, Mekong Delta day trips'],
+    ['Da Lat', 11.9404, 108.4583, 'Cool highlands, waterfalls, canyoning'],
+    ['Hoi An', 15.8801, 108.338, 'Lantern-lit old town, tailors, beaches by bike'],
+    ['Hue', 16.4637, 107.5909, 'Imperial citadel and royal tombs'],
+    ['Ninh Binh', 20.2506, 105.9745, 'River boat rides through karst cliffs'],
+    ['Hanoi', 21.0278, 105.8342, 'Old Quarter, egg coffee, base for Ha Long'],
+    ['Ha Long Bay', 20.9101, 107.1839, 'Overnight boat among limestone islands']],
+  Cambodia: [['Phnom Penh', 11.5564, 104.9282, 'Royal Palace, history museums, riverside'],
+    ['Siem Reap', 13.3633, 103.8564, 'Angkor Wat temples at sunrise'],
+    ['Kampot', 10.6104, 104.1815, 'Riverside town, pepper farms, Bokor mountain'],
+    ['Koh Rong', 10.7105, 103.2394, 'Island beaches, glowing plankton at night']],
+  Laos: [['Luang Prabang', 19.8856, 102.1347, 'Temples, Kuang Si waterfalls, night market'],
+    ['Vang Vieng', 18.9235, 102.4478, 'Tubing, caves, hot-air balloons'],
+    ['Vientiane', 17.9757, 102.6331, 'Laid-back capital, Mekong sunsets'],
+    ['4000 Islands', 13.9661, 105.9203, 'River islands, hammocks, Mekong falls']],
+  Philippines: [['Manila', 14.5995, 120.9842, 'Intramuros, food scene, main flight hub'],
+    ['El Nido', 11.1956, 119.4075, 'Island-hopping, lagoons, beaches'],
+    ['Coron', 11.9986, 120.2043, 'Shipwreck snorkeling, Kayangan Lake'],
+    ['Siargao', 9.8482, 126.0458, 'Surfing and an easygoing island scene'],
+    ['Cebu', 10.3157, 123.8854, 'Canyoneering, waterfalls, whale sharks'],
+    ['Bohol', 9.85, 124.1435, 'Chocolate Hills, tarsiers, Panglao beaches']],
+};
+const placeInfo = (name) => {
+  for (const [country, list] of Object.entries(ASIA_PLACES)) {
+    const p = list.find(([n]) => n === name);
+    if (p) return { name: p[0], country, lat: p[1], lng: p[2], blurb: p[3] };
+  }
+  return null;
+};
+const ASIA_SEASON = {
+  Vietnam: 'April–May is dry and hot in the center (Hoi An, Hue), which is great beach time. The north is pleasant in April and humid by May; the south\'s rains start mid-May. Apr 30 – May 1 holidays make domestic travel busy.',
+  Cambodia: 'The hottest time of year (35°C+): see Angkor at sunrise and rest at midday. Khmer New Year (mid-April) brings closures and full buses. Rains begin in May.',
+  Laos: 'Hot season, and March–April can be hazy from field burning in the north. Lao New Year (mid-April) is a huge water festival, especially in Luang Prabang, so book rooms ahead.',
+  Philippines: 'Dry season runs through May: the best island-hopping weather, but very hot. Domestic flights and island transfers fill up, so book ahead.',
+};
+const ASIA_PRESETS = [
+  { name: 'Your outline', note: 'Vietnam → Cambodia → Laos → Philippines',
+    stops: [['Ho Chi Minh City', 3], ['Hoi An', 4], ['Hanoi', 3], ['Ha Long Bay', 1], ['Siem Reap', 3], ['Phnom Penh', 2],
+      ['Luang Prabang', 4], ['Vang Vieng', 3], ['El Nido', 6], ['Coron', 3], ['Manila', 2]] },
+  { name: 'Slower pace', note: 'Fewer moves, longer stays',
+    stops: [['Ho Chi Minh City', 4], ['Hoi An', 6], ['Siem Reap', 4], ['Luang Prabang', 6], ['El Nido', 8], ['Manila', 3]] },
+  { name: 'More island time', note: 'Shorter mainland, longer Philippines',
+    stops: [['Hoi An', 5], ['Hanoi', 3], ['Siem Reap', 3], ['Luang Prabang', 4], ['Siargao', 6], ['Bohol', 4], ['El Nido', 5], ['Manila', 2]] },
+];
+
+const asiaStops = () => sortedStops().filter((s) => s.continent === 'Asia');
+function planWindow() {
+  const plan = state.asiaPlan;
+  const first = asiaStops()[0];
+  const start = plan?.start || first?.arrive || toISO(addDays(parseDate(state.trip.end), -36));
+  const end = plan?.end || state.trip.end;
+  return { start, end: end > start ? end : state.trip.end };
+}
+function currentPlan() {
+  if (!state.asiaPlan) {
+    state.asiaPlan = {
+      start: '', end: '',
+      stops: asiaStops().map((s) => ({ name: s.name, country: s.country, lat: s.lat, lng: s.lng, nights: Math.max(1, daysBetween(s.arrive, s.depart)) })),
+    };
+  }
+  return state.asiaPlan;
+}
+function planMode(a, b) {
+  if (a.country === b.country && a.country === 'Laos') return 'Train';
+  if (a.country === b.country && a.country === 'Philippines') return haversine(a, b) > 150 ? 'Plane' : 'Ferry';
+  return a.country !== b.country || haversine(a, b) > 450 ? 'Plane' : 'Bus';
+}
+function fitPlan() {
+  const plan = currentPlan();
+  const { start, end } = planWindow();
+  const avail = daysBetween(start, end);
+  const total = plan.stops.reduce((n, p) => n + p.nights, 0);
+  if (!plan.stops.length || !total || avail < plan.stops.length) return;
+  const exact = plan.stops.map((p) => (p.nights / total) * avail);
+  plan.stops.forEach((p, i) => { p.nights = Math.max(1, Math.floor(exact[i])); });
+  let diff = avail - plan.stops.reduce((n, p) => n + p.nights, 0);
+  const order = exact.map((x, i) => [x - Math.floor(x), i]).sort((a, b) => b[0] - a[0]);
+  for (let k = 0; diff !== 0 && k < 500; k++) {
+    const i = order[k % order.length][1];
+    if (diff > 0) { plan.stops[i].nights++; diff--; } else if (plan.stops[i].nights > 1) { plan.stops[i].nights--; diff++; }
+  }
+}
+
+function renderPlanner() {
+  if (readOnly) return;
+  const plan = currentPlan();
+  const { start, end } = planWindow();
+  const avail = daysBetween(start, end);
+  const planned = plan.stops.reduce((n, p) => n + p.nights, 0);
+  const f = $('#plan-window').elements;
+  if (document.activeElement !== f.start) f.start.value = start;
+  if (document.activeElement !== f.end) f.end.value = end;
+  const diff = avail - planned;
+  $('#plan-fit-note').innerHTML = `<strong>${avail}</strong> nights available · <strong>${planned}</strong> planned${diff ? ` · <span class="${diff < 0 ? 'over' : ''}">${diff < 0 ? `${-diff} too many` : `${diff} unplanned`}</span>` : ' · fits exactly'}`;
+  $('#plan-fit').hidden = !diff || !plan.stops.length;
+
+  $('#plan-presets').innerHTML = ASIA_PRESETS.map((p, i) => `
+    <button type="button" class="preset" data-preset="${i}"><strong>${p.name}</strong><span>${p.note} · ${p.stops.length} stops</span></button>`).join('')
+    + '<button type="button" class="preset" data-preset="current"><strong>Current trip</strong><span>Start from the stops on your trip now</span></button>';
+
+  const list = $('#plan-list');
+  let cursor = parseDate(start);
+  list.innerHTML = plan.stops.length ? '' : '<li class="empty">No places yet. Pick a starting route above or add places below.</li>';
+  plan.stops.forEach((p, i) => {
+    if (i > 0) {
+      const prev = plan.stops[i - 1];
+      const mode = planMode(prev, p);
+      const leg = document.createElement('li');
+      leg.className = 'leg';
+      leg.innerHTML = `${transportIcon(mode)} ${mode} · ${Math.round(haversine(prev, p)).toLocaleString()} km`;
+      list.appendChild(leg);
+    }
+    const arrive = toISO(cursor);
+    cursor = addDays(cursor, p.nights);
+    const info = placeInfo(p.name);
+    const li = document.createElement('li');
+    li.className = 'plan-row';
+    li.dataset.i = i;
+    li.innerHTML = `
+      <span class="num">${i + 1}</span>
+      <div class="plan-body">
+        <div class="title">${escapeHTML(p.name)} <span class="muted plan-country">${escapeHTML(p.country)}</span></div>
+        <div class="meta">${fmtDate(arrive)} → ${fmtDate(toISO(cursor))}${info ? ` · ${escapeHTML(info.blurb)}` : ''}</div>
+      </div>
+      <div class="plan-ctrl">
+        <div class="stepper"><button type="button" data-act="minus" aria-label="One night less">−</button><span>${p.nights}<small> n</small></span><button type="button" data-act="plus" aria-label="One night more">+</button></div>
+        <button type="button" class="ghost" data-act="up" aria-label="Move earlier"${i === 0 ? ' disabled' : ''}>↑</button>
+        <button type="button" class="ghost" data-act="down" aria-label="Move later"${i === plan.stops.length - 1 ? ' disabled' : ''}>↓</button>
+        <button type="button" class="ghost" data-act="remove" aria-label="Remove">×</button>
+      </div>`;
+    list.appendChild(li);
+  });
+
+  const add = $('#plan-add-place');
+  if (!add.options.length) {
+    add.innerHTML = Object.entries(ASIA_PLACES).map(([country, places]) => `<optgroup label="${country}">${places.map(([n]) => `<option>${n}</option>`).join('')}</optgroup>`).join('');
+  }
+
+  const legs = plan.stops.map((p) => ({ ...p, continent: 'Asia' }));
+  legs.forEach((p, i) => { p.transport = i ? planMode(plan.stops[i - 1], p) : 'Plane'; });
+  const lastEurope = sortedStops().filter((s) => s.continent !== 'Asia' && s.depart <= start).at(-1);
+  const cost = predictCost(legs, lastEurope ?? state.trip.home, state.trip.home);
+  const flights = legs.filter((p, i) => i && p.transport === 'Plane').length;
+  const countries = [...new Set(plan.stops.map((p) => p.country))];
+  $('#plan-summary').innerHTML = plan.stops.length
+    ? `<div><span class="muted">Estimated cost</span><strong>${usd(cost.total)}</strong></div>
+       <div><span class="muted">Countries</span><strong>${countries.length}</strong></div>
+       <div><span class="muted">Flights inside Asia</span><strong>${flights}</strong></div>
+       <div><span class="muted">Stops</span><strong>${plan.stops.length}</strong></div>` : '';
+  $('#plan-season').innerHTML = countries.filter((c) => ASIA_SEASON[c])
+    .map((c) => `<div class="season"><strong>${c}</strong><p>${ASIA_SEASON[c]}</p></div>`).join('')
+    || '<p class="muted">Add places to see what to expect in April and May.</p>';
+  $('#plan-apply').disabled = !plan.stops.length || diff < 0;
+  $('#plan-apply-note').textContent = diff < 0 ? `Trim ${-diff} night${diff === -1 ? '' : 's'} (or tap Fit to dates) before putting this on your trip.` : '';
+}
+
+$('#plan-list').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-act]');
+  const row = e.target.closest('.plan-row');
+  if (!btn || !row) return;
+  const stops = currentPlan().stops;
+  const i = Number(row.dataset.i);
+  const act = btn.dataset.act;
+  if (act === 'plus') stops[i].nights = Math.min(60, stops[i].nights + 1);
+  if (act === 'minus') stops[i].nights = Math.max(1, stops[i].nights - 1);
+  if (act === 'up' && i > 0) [stops[i - 1], stops[i]] = [stops[i], stops[i - 1]];
+  if (act === 'down' && i < stops.length - 1) [stops[i + 1], stops[i]] = [stops[i], stops[i + 1]];
+  if (act === 'remove') stops.splice(i, 1);
+  save();
+  renderPlanner();
+});
+$('#plan-presets').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-preset]');
+  if (!btn) return;
+  const plan = currentPlan();
+  if (btn.dataset.preset === 'current') {
+    const { start, end } = plan;
+    state.asiaPlan = null;
+    Object.assign(currentPlan(), { start, end });
+  } else {
+    plan.stops = ASIA_PRESETS[Number(btn.dataset.preset)].stops.map(([name, nights]) => {
+      const p = placeInfo(name);
+      return { name: p.name, country: p.country, lat: p.lat, lng: p.lng, nights };
+    });
+    fitPlan();
+  }
+  save();
+  renderPlanner();
+});
+$('#plan-add').addEventListener('click', () => {
+  const p = placeInfo($('#plan-add-place').value);
+  if (!p) return;
+  currentPlan().stops.push({ name: p.name, country: p.country, lat: p.lat, lng: p.lng, nights: 3 });
+  save();
+  renderPlanner();
+});
+$('#plan-window').addEventListener('change', (e) => {
+  const f = e.currentTarget.elements;
+  if (!f.start.value || !f.end.value || f.end.value <= f.start.value) return;
+  Object.assign(currentPlan(), { start: f.start.value, end: f.end.value });
+  save();
+  renderPlanner();
+});
+$('#plan-fit').addEventListener('click', () => { fitPlan(); save(); renderPlanner(); });
+$('#plan-apply').addEventListener('click', () => {
+  const plan = currentPlan();
+  const { start } = planWindow();
+  const old = asiaStops().filter((s) => s.depart > start);
+  const keep = old.filter((s) => s.status === 'booked');
+  const replaced = old.length - keep.length;
+  if (!confirm(`Put this ${plan.stops.length}-stop route on your trip as tentative stops?${replaced ? ` It replaces ${replaced} tentative Asia stop${replaced === 1 ? '' : 's'}.` : ''}${keep.length ? ` Booked stops (${keep.map((s) => s.name).join(', ')}) stay as they are.` : ''}`)) return;
+  const leg = old.find((s) => s.leg)?.leg || 'Southeast Asia';
+  state.stops = state.stops.filter((s) => !(s.continent === 'Asia' && s.depart > start && s.status !== 'booked' && !isIdea(s)));
+  let cursor = parseDate(start);
+  plan.stops.forEach((p, i) => {
+    const arrive = toISO(cursor);
+    cursor = addDays(cursor, p.nights);
+    state.stops.push({
+      id: uid(), name: p.name, country: p.country, lat: p.lat, lng: p.lng, arrive, depart: toISO(cursor),
+      continent: 'Asia', transport: i ? planMode(plan.stops[i - 1], p) : 'Plane', status: 'tentative',
+      rating: 0, notes: '', photo: '', leg,
+    });
+  });
+  save();
+  render(true);
+  goTo('trip');
+});
 
 // ---------- Discover: free recommendations from Wikivoyage ----------
 //
@@ -2170,11 +2672,13 @@ const sb = cfg.supabaseUrl && cfg.supabaseAnonKey && window.supabase
 
 let user = null;
 let turningOff = false; // the user chose to turn encryption off, so a readable upload may replace the encrypted copy
+let serverVersion = 0; // which supabase/*-update.sql files the database has
 let serverReady = false; // the database has the encryption update (share_data column)
 async function checkServer() {
   try {
     const { data: version } = await sb.rpc('wanderlog_schema_version');
-    serverReady = version >= 2;
+    serverVersion = Number(version) || 0;
+    serverReady = serverVersion >= 2;
   } catch {
     serverReady = false; // offline: checked again on the next sign-in or reload
   }
@@ -2791,3 +3295,30 @@ render(true);
   if (readOnly) startViewOnly();
   else startSync();
 })();
+
+// ---------- works offline: installable app ----------
+// The service worker keeps the app's files (and map tiles you've viewed) so
+// it opens without a connection; your trip itself is already saved on the
+// device. Skipped on localhost so local development always loads fresh files.
+if ('serviceWorker' in navigator && window.isSecureContext && location.hostname !== 'localhost') {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installPrompt = e;
+});
+const installDialog = $('#install-dialog');
+$('#btn-install').addEventListener('click', () => {
+  setMenu(false);
+  $('#btn-install-now').hidden = !installPrompt;
+  installDialog.showModal();
+});
+$('#btn-install-now').addEventListener('click', async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  await installPrompt.userChoice.catch(() => {});
+  installPrompt = null;
+  installDialog.close();
+});
+$('#btn-install-close').addEventListener('click', () => installDialog.close());

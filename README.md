@@ -3,9 +3,12 @@
 A no-build web app for tracking a 4.5-month trip through Europe and Asia.
 
 ## Features
-The app is organized into tabs: **🏠 Home · 🗺️ Trip · ✨ Discover · 🎫 Bookings · ✅ To-dos · 👤 Profile** (along the top on a laptop, along the bottom on a phone).
+The app is organized into tabs: **Home · Trip · Discover · Bookings · Budget · To-dos · Profile** (a sidebar on a laptop, along the bottom on a phone).
 
-- **Home:** trip countdown, Next up, what needs attention, the next few stops, and key stats
+- **Home:** trip countdown, Next up, ring gauges (trip progress, stops booked, Schengen days, to-dos), what needs attention, the next few stops, nights per month and per country, and a trip calendar
+- **Budget:** an estimated trip cost built from your stops, nights and travel style (typical daily costs per country plus travel between stops), a budget you can set, and a spending log in any currency converted to US$ with free exchange rates from [ExchangeRate-API](https://www.exchangerate-api.com); shows what's left and a daily allowance
+- **Asia leg planner** (Trip → Plan Asia leg): starting routes for Vietnam, Cambodia, Laos and the Philippines, nights per place, travel between them, an estimated cost, what to expect in April–May, and one tap to put the route on the trip as tentative stops
+- **Works offline and installs on a phone** (⋯ → Install on your phone): the app, your trip and map areas you've viewed open without a connection
 - **To-dos:** reminders worked out from your trip (book transport and stays, online check-in, entry and visa rules, pre-trip checklist), grouped by month, plus your own tasks with due dates; suggested ones can be ticked off or dismissed
 - **Schengen 90/180 counter:** your busiest 180-day window in the Schengen area, for US passport holders
 - **Travel profile:** a quick quiz (early bird or night owl, interests, food, pace, budget, goals) that personalizes Discover
@@ -46,7 +49,7 @@ The anon key is designed to be public: the database's row-level security only le
 - **Untrusted data is cleaned** on load (imports, sync, family link) so tampered values can't inject markup, and all text is escaped before display.
 - **No secrets in this repo.** The Supabase publishable key is designed to be public; access is enforced by the database rules in `supabase/setup.sql`.
 
-Existing projects created before the family-link filtering should run [`supabase/privacy-update.sql`](supabase/privacy-update.sql) once in the Supabase SQL Editor. Projects created before encryption should also run [`supabase/encryption-update.sql`](supabase/encryption-update.sql) once (safe to run again).
+Existing projects created before the family-link filtering should run [`supabase/privacy-update.sql`](supabase/privacy-update.sql) once in the Supabase SQL Editor. Projects created before encryption should also run [`supabase/encryption-update.sql`](supabase/encryption-update.sql) once (safe to run again). Projects set up before the budget should run [`supabase/budget-update.sql`](supabase/budget-update.sql) once so the budget and planner draft stay off the family link when the trip isn't encrypted (an encrypted trip's family link already leaves them out).
 
 ## Run it
 Open `index.html` in a browser, or serve the folder:

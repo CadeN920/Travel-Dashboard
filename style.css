@@ -425,6 +425,7 @@ menu { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 6px 0 0; }
   display: inline-grid; place-items: center;
 }
 .readonly .nav-item[data-view="discover"], .readonly .nav-item[data-view="todos"], .readonly .nav-item[data-view="profile"],
+.readonly .nav-item[data-view="budget"], .readonly .plan-link, .readonly #btn-install,
 .readonly #btn-add-booking { display: none; }
 
 /* ---------- pages & cards ---------- */
@@ -916,3 +917,102 @@ button .i { margin-right: 2px; }
 .next-up { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
 .next-card { max-width: none; }
 .bars-more { margin: 4px 0 0; font-size: .82rem; }
+
+/* ---------- budget ---------- */
+.page .card { margin-top: 14px; }
+.budget-top { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.budget-top .card { margin-top: 0; }
+.budget-hero { display: flex; align-items: center; gap: 20px; }
+.budget-ring { width: 112px; height: 112px; }
+.budget-nums { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+.budget-row { display: flex; justify-content: space-between; gap: 12px; font-size: .92rem; color: var(--muted); }
+.budget-row strong { color: var(--ink); font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+.budget-row.over strong { color: var(--danger); }
+.budget-tip { margin: 6px 0 0; font-size: .85rem; color: var(--muted); }
+.budget-tip strong { color: var(--ink); }
+.budget-edit { margin-top: 16px; }
+.budget-edit input { max-width: 220px; }
+.big-number {
+  font-size: 2.2rem; font-weight: 750; letter-spacing: -.03em; line-height: 1.1;
+  background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.bar.neon { background: var(--grad); box-shadow: 0 0 10px rgba(192, 77, 255, .4); }
+.bar.neon.over { background: linear-gradient(90deg, var(--warn), var(--danger)); }
+.bar-value.wide { min-width: 0; white-space: nowrap; }
+#budget-cats .bar-row, #budget-stops .bar-row { grid-template-columns: minmax(100px, 32%) 1fr auto; }
+.bar-track.est { position: relative; background: rgba(255, 255, 255, .04); }
+.bar-track.est::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--est);
+  border-radius: 0 4px 4px 0; background: rgba(167, 139, 250, .22); border-right: 2px solid rgba(167, 139, 250, .6);
+}
+.bar-track.est .bar { position: relative; }
+.key.est::before { background: rgba(167, 139, 250, .45); }
+.key.spent::before { background: var(--grad); }
+.expense-form { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; align-items: end; }
+.expense-form .amt { grid-column: span 2; }
+.expense-form .note { grid-column: span 4; }
+.expense-form label { min-width: 0; }
+.expense-form select, .expense-form input { width: 100%; min-width: 0; }
+.expense-form button { grid-column: span 2; height: 42px; }
+.expense { grid-template-columns: 74px 1fr auto; align-items: center; }
+.exp-cat { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--accent-2); }
+.exp-amt { font-weight: 700; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 4px; }
+.warn-note { border-color: rgba(255, 176, 32, .5); color: var(--warn); font-size: .88rem; }
+.budget-credit { margin-top: 18px; }
+.budget-credit a { color: var(--muted); }
+
+/* ---------- Asia leg planner ---------- */
+.plan-link { font-size: .82rem; }
+.back-link { padding: 0; margin-bottom: 6px; }
+.plan-window { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.plan-fit-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 0 0; font-size: .9rem; }
+.plan-fit-row strong { color: var(--ink); }
+.plan-fit-row .over { color: var(--danger); font-weight: 600; }
+.presets { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.preset {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; white-space: normal;
+  padding: 12px 14px; border-radius: 14px; background: var(--panel-2);
+}
+.preset span { font-size: .78rem; color: var(--muted); font-weight: 400; }
+.preset:hover { border-color: rgba(255, 95, 216, .5); }
+.plan-list { list-style: none; margin: 0; padding: 0; }
+.plan-row { display: grid; grid-template-columns: 26px 1fr auto; gap: 12px; align-items: center; padding: 10px 4px; }
+.plan-row .num {
+  width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--asia); color: #fff; font-size: .75rem; font-weight: 700; box-shadow: 0 0 10px rgba(207, 122, 38, .6);
+}
+.plan-row .title { font-weight: 650; }
+.plan-country { font-weight: 400; font-size: .82rem; }
+.plan-row .meta { color: var(--muted); font-size: .8rem; margin-top: 2px; }
+.plan-ctrl { display: flex; align-items: center; gap: 2px; }
+.plan-ctrl > button { padding: 4px 8px; font-size: 1rem; line-height: 1; }
+.stepper { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 10px; margin-right: 4px; }
+.stepper button { border: none; background: none; padding: 4px 10px; font-size: 1.05rem; line-height: 1; }
+.stepper span { min-width: 34px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stepper small { color: var(--muted); font-weight: 500; }
+.plan-list .leg { margin-left: 12px; }
+.plan-add { display: flex; gap: 8px; margin-top: 12px; }
+.plan-add select { flex: 1; min-width: 0; }
+.plan-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.plan-summary div { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 12px; background: var(--panel-2); }
+.plan-summary span { font-size: .78rem; }
+.plan-summary strong { font-size: 1.15rem; }
+.plan-apply { width: 100%; padding: 12px; }
+.seasons { display: flex; flex-direction: column; gap: 12px; }
+.season p { margin: 3px 0 0; font-size: .88rem; color: var(--muted); }
+.install-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; font-size: .92rem; }
+
+@media (max-width: 860px) {
+  .budget-top { grid-template-columns: 1fr; }
+  .budget-ring { width: 96px; height: 96px; }
+  .expense-form { grid-template-columns: 1fr 1fr; }
+  .expense-form .amt, .expense-form .note, .expense-form button { grid-column: span 2; }
+  .plan-row { grid-template-columns: 26px 1fr; }
+  .plan-ctrl { grid-column: 2; }
+  .plan-summary { grid-template-columns: 1fr 1fr; }
+  .plan-window { grid-template-columns: 1fr 1fr; }
+  #budget-cats .bar-row, #budget-stops .bar-row { grid-template-columns: minmax(80px, 30%) 1fr auto; gap: 8px; }
+  .nav-item { font-size: .62rem; }
+}
+.plan-window label { min-width: 0; }
+.plan-window input { width: 100%; min-width: 0; }

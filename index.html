@@ -11,11 +11,20 @@
     style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com;
     font-src https://fonts.gstatic.com;
     img-src 'self' data: https:;
-    connect-src 'self' https://*.supabase.co https://nominatim.openstreetmap.org https://en.wikivoyage.org;
+    connect-src 'self' https://*.supabase.co https://nominatim.openstreetmap.org https://en.wikivoyage.org https://open.er-api.com;
     object-src 'none'; base-uri 'self'; form-action 'self'" />
   <!-- Never tell other sites which page you came from (keeps the family link's secret private). -->
   <meta name="referrer" content="no-referrer" />
   <title>Wanderlog</title>
+  <!-- Installable on a phone's home screen, and works offline (see sw.js). -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#0c0819" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <meta name="apple-mobile-web-app-title" content="Wanderlog" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -38,6 +47,7 @@
         <div id="more-menu" class="dropdown" role="menu" hidden>
           <button id="btn-settings" role="menuitem">Trip settings</button>
           <button id="btn-crypto" role="menuitem">Encryption · <span id="crypto-status">Off</span></button>
+          <button id="btn-install" role="menuitem">Install on your phone</button>
           <button id="btn-export" role="menuitem">Export backup</button>
           <label class="button" role="menuitem">
             Import backup <input id="file-import" type="file" accept="application/json" hidden />
@@ -54,6 +64,7 @@
     <button data-view="trip" class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></svg><span>Trip</span></button>
     <button data-view="discover" class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.8 4.7 4.7 1.8-4.7 1.8L12 16l-1.8-4.7-4.7-1.8 4.7-1.8z"/><path d="m19 15 .8 2.2 2.2.8-2.2.8L19 21l-.8-2.2-2.2-.8 2.2-.8z"/></svg><span>Discover</span></button>
     <button data-view="bookings" class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18v3a2 2 0 0 0 0 4v3H3v-3a2 2 0 0 0 0-4z"/><path d="M14 7v2M14 11v2M14 15v2"/></svg><span>Bookings</span></button>
+    <button data-view="budget" class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2.5"/><path d="M3 10h18M16.5 14.5h.01"/><path d="M6 6V5a2 2 0 0 1 2-2h9"/></svg><span>Budget</span></button>
     <button data-view="todos" class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="m8 12 3 3 5-6"/></svg><span>To-dos</span><span id="todo-count" class="nav-count" hidden></span></button>
     <button data-view="profile" class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg><span>Profile</span></button>
   </nav>
@@ -143,7 +154,7 @@
       <div id="map"></div>
       <aside class="timeline">
         <div class="timeline-head">
-          <h2>Itinerary</h2>
+          <div class="tab-row"><h2>Itinerary</h2><button class="link plan-link" data-goto="planner">Plan Asia leg →</button></div>
           <div class="filters" id="filters">
             <button data-filter="all" class="chip active">All</button>
             <button data-filter="Europe" class="chip">Europe</button>
@@ -172,6 +183,115 @@
       <ol id="booking-list"></ol>
       <p id="bookings-empty" class="empty">No bookings yet. Add flights, trains and places you're staying, with confirmation numbers, so everything's in one place on travel day.</p>
     </div>
+  </section>
+
+
+  <!-- Budget: predicted cost from the trip, plus a spending log -->
+  <section id="view-budget" class="view page" hidden>
+    <div class="page-head">
+      <div>
+        <h2>Budget</h2>
+        <p class="muted">An estimate built from your stops, nights and travel style, and what you actually spend.</p>
+      </div>
+    </div>
+
+    <div class="budget-top">
+      <section class="card budget-card"><div id="budget-hero" class="budget-hero"></div>
+        <label class="budget-edit">Your budget (US$)
+          <input id="budget-input" type="number" inputmode="numeric" min="0" step="100" />
+        </label>
+        <p class="muted small-print">Leave it empty to use the estimate.</p>
+      </section>
+      <section class="card budget-card">
+        <div class="card-head"><h2>Estimated trip cost</h2></div>
+        <div id="budget-estimate" class="big-number"></div>
+        <p id="budget-style" class="muted small-print"></p>
+        <div id="budget-cats" class="bars"></div>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="card-head"><h2>Log spending</h2></div>
+      <form id="expense-form" class="expense-form" autocomplete="off">
+        <label class="amt">Amount <input name="amount" type="number" inputmode="decimal" min="0" step="any" required placeholder="0.00" /></label>
+        <label>Currency <select name="currency"></select></label>
+        <label>Category
+          <select name="category">
+            <option value="food">Food &amp; drink</option>
+            <option value="stay">Stays</option>
+            <option value="local">Getting around</option>
+            <option value="fun">Activities</option>
+            <option value="travel">Travel between stops</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <label>Date <input name="date" type="date" required /></label>
+        <label>For <select name="stop"></select></label>
+        <label class="note">Note <input name="note" maxlength="200" placeholder="e.g. Tapas dinner" /></label>
+        <button type="submit" class="primary">Add</button>
+      </form>
+      <p id="expense-preview" class="muted small-print"></p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>By stop</h2>
+        <span class="muted progress-label"><span class="key est">Estimate</span><span class="key spent">Spent</span></span>
+      </div>
+      <div id="budget-stops" class="bars"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Spending log</h2><span id="expense-total" class="muted card-note"></span></div>
+      <ul id="expense-list" class="task-list"></ul>
+    </section>
+
+    <p id="budget-sql-note" class="card warn-note" hidden>Your budget is private, but run <strong>supabase/budget-update.sql</strong> once in Supabase so it also stays off the family link while encryption is off.</p>
+    <p class="muted small-print budget-credit">How the estimate works: typical daily costs per country for a student traveler (shared stays, eating out, local transport, sights), adjusted by the budget answer in your travel profile, plus estimated travel between stops. It's a guide, not a quote. Exchange rates by <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">ExchangeRate-API</a>.</p>
+  </section>
+
+  <!-- Asia leg planner -->
+  <section id="view-planner" class="view page" hidden>
+    <div class="page-head">
+      <div>
+        <button class="link back-link" data-goto="trip">← Trip</button>
+        <h2>Asia leg planner</h2>
+        <p class="muted">Try routes for Vietnam, Cambodia, Laos and the Philippines, then put the one you like on your trip.</p>
+      </div>
+    </div>
+
+    <section class="card">
+      <form id="plan-window" class="plan-window">
+        <label>From <input name="start" type="date" /></label>
+        <label>To <input name="end" type="date" /></label>
+      </form>
+      <p class="plan-fit-row"><span id="plan-fit-note" class="muted"></span> <button type="button" id="plan-fit" class="small">Fit to dates</button></p>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Start from</h2></div>
+      <div id="plan-presets" class="presets"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Route</h2></div>
+      <ol id="plan-list" class="plan-list"></ol>
+      <div class="plan-add">
+        <select id="plan-add-place" aria-label="Place to add"></select>
+        <button type="button" id="plan-add">+ Add place</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div id="plan-summary" class="plan-summary"></div>
+      <button type="button" id="plan-apply" class="primary plan-apply">Put this route on my trip</button>
+      <p id="plan-apply-note" class="muted small-print"></p>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>What to expect in April and May</h2></div>
+      <div id="plan-season" class="seasons"></div>
+    </section>
   </section>
 
   <!-- Discover: free recommendations from Wikivoyage, ranked by the travel profile -->
@@ -271,6 +391,22 @@
       </linearGradient>
     </defs>
   </svg>
+
+  <dialog id="install-dialog">
+    <form method="dialog">
+      <h2>Install on your phone</h2>
+      <p class="muted">Wanderlog then opens from your home screen like an app, and works without a connection: your trip, bookings and confirmation numbers are saved on the phone.</p>
+      <ol class="install-steps">
+        <li><strong>iPhone (Safari):</strong> tap the Share button, then <strong>Add to Home Screen</strong>.</li>
+        <li><strong>Android (Chrome):</strong> tap the ⋮ menu, then <strong>Install app</strong> or <strong>Add to Home screen</strong>.</li>
+      </ol>
+      <p class="muted small-print">Open the app once while online after each update so the latest version is saved for offline use. Map areas you've looked at are kept for offline viewing.</p>
+      <menu>
+        <button type="button" id="btn-install-now" class="primary" hidden>Install now</button>
+        <button type="button" id="btn-install-close">Done</button>
+      </menu>
+    </form>
+  </dialog>
 
   <dialog id="stop-dialog">
     <form id="stop-form" method="dialog">

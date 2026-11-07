@@ -11,13 +11,13 @@ grant insert (share_data), update (share_data) on public.trips to authenticated;
 
 -- Family link: the sealed snapshot when the trip is encrypted; otherwise the
 -- readable trip minus booking codes, links and notes, to-dos, profile and
--- wishlist (filtered here so those never leave the database).
+-- wishlist, budget and planner drafts (filtered here so those never leave the database).
 create or replace function public.get_shared_trip(token text) returns jsonb
 language sql stable security definer set search_path = public as $$
   select case
     when share_data is not null then share_data
     when data ? 'enc' then null
-    else (data - 'todos' - 'todoState' - 'profile' - 'wishlist')
+    else (data - 'todos' - 'todoState' - 'profile' - 'wishlist' - 'money' - 'asiaPlan')
       || jsonb_build_object('bookings', coalesce((
            select jsonb_agg(b - 'confirmation' - 'link' - 'notes')
            from jsonb_array_elements(coalesce(data -> 'bookings', '[]'::jsonb)) as b
@@ -45,7 +45,7 @@ $$;
 
 -- Lets the app check this update has been applied.
 create or replace function public.wanderlog_schema_version() returns int
-language sql immutable as $$ select 2 $$;
+language sql immutable as $$ select 3 $$;
 
 revoke execute on function public.new_share_link(uuid), public.stop_share_link(uuid) from public, anon;
 grant execute on function public.new_share_link(uuid), public.stop_share_link(uuid) to authenticated;
