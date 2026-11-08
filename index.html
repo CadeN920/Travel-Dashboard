@@ -47,6 +47,7 @@
         <div id="more-menu" class="dropdown" role="menu" hidden>
           <button id="btn-settings" role="menuitem">Trip settings</button>
           <button id="btn-crypto" role="menuitem">Encryption · <span id="crypto-status">Off</span></button>
+          <button id="btn-changes" role="menuitem">Paste changes</button>
           <button id="btn-install" role="menuitem">Install on your phone</button>
           <button id="btn-export" role="menuitem">Export backup</button>
           <label class="button" role="menuitem">
@@ -406,6 +407,22 @@
       </linearGradient>
     </defs>
   </svg>
+
+  <dialog id="changes-dialog">
+    <form method="dialog">
+      <h2>Paste changes</h2>
+      <p class="muted">Paste a changes block (for example one Claude wrote for you). You'll see exactly what it changes before anything is saved.</p>
+      <textarea id="changes-text" rows="7" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder='{"wanderlog-changes": 1, …}'></textarea>
+      <p id="changes-error" class="error"></p>
+      <div id="changes-preview" class="changes-preview"></div>
+      <menu>
+        <button type="button" id="btn-changes-preview">Preview</button>
+        <button type="button" id="btn-changes-apply" class="primary" hidden>Apply</button>
+        <span class="spacer"></span>
+        <button type="button" id="btn-changes-close">Close</button>
+      </menu>
+    </form>
+  </dialog>
 
   <dialog id="install-dialog">
     <form method="dialog">

@@ -1899,22 +1899,28 @@ $('#plan-apply').addEventListener('click', () => {
   const keep = old.filter((s) => s.status === 'booked');
   const replaced = old.length - keep.length;
   if (!confirm(`Put this ${plan.stops.length}-stop route on your trip as tentative stops?${replaced ? ` It replaces ${replaced} tentative Asia stop${replaced === 1 ? '' : 's'}.` : ''}${keep.length ? ` Booked stops (${keep.map((s) => s.name).join(', ')}) stay as they are.` : ''}`)) return;
-  const leg = old.find((s) => s.leg)?.leg || 'Southeast Asia';
-  state.stops = state.stops.filter((s) => !(s.continent === 'Asia' && s.depart > start && s.status !== 'booked' && !isIdea(s)));
-  let cursor = parseDate(start);
-  plan.stops.forEach((p, i) => {
-    const arrive = toISO(cursor);
-    cursor = addDays(cursor, p.nights);
-    state.stops.push({
-      id: uid(), name: p.name, country: p.country, lat: p.lat, lng: p.lng, arrive, depart: toISO(cursor),
-      continent: 'Asia', transport: i ? planMode(plan.stops[i - 1], p) : 'Plane', status: 'tentative',
-      rating: 0, notes: '', photo: '', leg,
-    });
-  });
+  placePlanOnTrip(plan.stops, start);
   save();
   render(true);
   goTo('trip');
 });
+
+// Replace the tentative Asia stops from `start` on with planned places (booked stops stay).
+function placePlanOnTrip(planStops, start) {
+  const old = asiaStops().filter((s) => s.depart > start);
+  const leg = old.find((s) => s.leg)?.leg || 'Southeast Asia';
+  state.stops = state.stops.filter((s) => !(s.continent === 'Asia' && s.depart > start && s.status !== 'booked' && !isIdea(s)));
+  let cursor = parseDate(start);
+  planStops.forEach((p, i) => {
+    const arrive = toISO(cursor);
+    cursor = addDays(cursor, p.nights);
+    state.stops.push({
+      id: uid(), name: p.name, country: p.country, lat: p.lat, lng: p.lng, arrive, depart: toISO(cursor),
+      continent: 'Asia', transport: i ? planMode(planStops[i - 1], p) : 'Plane', status: 'tentative',
+      rating: 0, notes: '', photo: '', leg,
+    });
+  });
+}
 
 // ---------- Discover: free recommendations from Wikivoyage ----------
 //
@@ -2552,20 +2558,23 @@ stopForm.addEventListener('submit', (e) => {
   const idx = state.stops.findIndex((s) => s.id === stop.id);
   const before = idx >= 0 ? state.stops[idx] : null;
   if (before && !isIdea(before) && !idea && !$('#shift-later-row').hidden && f.shiftLater.checked) {
-    const delta = daysBetween(before.depart, stop.depart);
-    if (delta) {
-      state.stops.forEach((s) => {
-        if (s.id === stop.id || isIdea(s) || s.arrive < before.depart) return;
-        s.arrive = toISO(addDays(parseDate(s.arrive), delta));
-        s.depart = toISO(addDays(parseDate(s.depart), delta));
-      });
-    }
+    shiftStopsAfter(before.depart, daysBetween(before.depart, stop.depart), stop.id);
   }
   if (idx >= 0) state.stops[idx] = stop;
   else state.stops.push(stop);
   save();
   render(idx < 0);
 });
+
+// Move every dated stop that starts on/after `from` by `delta` days.
+function shiftStopsAfter(from, delta, exceptId) {
+  if (!delta) return;
+  state.stops.forEach((s) => {
+    if (s.id === exceptId || isIdea(s) || s.arrive < from) return;
+    s.arrive = toISO(addDays(parseDate(s.arrive), delta));
+    s.depart = toISO(addDays(parseDate(s.depart), delta));
+  });
+}
 
 // ---------- place search (OpenStreetMap Nominatim, free, no key) ----------
 
@@ -3414,3 +3423,153 @@ $('#btn-install-now').addEventListener('click', async () => {
   installDialog.close();
 });
 $('#btn-install-close').addEventListener('click', () => installDialog.close());
+
+// ---------- Paste changes ----------
+//
+// A block of changes (written by you, or by Claude in a chat) that the app
+// previews and then applies on this device. Nothing is sent anywhere until
+// you tap Apply; then it syncs like any other edit (encrypted if that's on).
+//
+// {"wanderlog-changes": 1,
+//  "stops": [{"find": "Italy", "depart": "2027-03-02", "shiftLater": true}],
+//  "asiaRoute": "Your plan",
+//  "budget": 12000,
+//  "extras": [{"name": "Visas", "usd": 60}],
+//  "expenses": [{"date": "2027-01-06", "amount": 459.8, "currency": "USD", "category": "travel", "note": "Flight"}]}
+
+const isDayStr = (d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(parseDate(d).getTime());
+
+function parseChanges(text) {
+  let data;
+  try {
+    data = JSON.parse(text.trim().replace(/^```(?:json)?|```$/g, ''));
+  } catch {
+    throw new Error("That doesn't look like a changes block. Copy the whole thing, from the first { to the last }.");
+  }
+  if (!data || typeof data !== 'object' || data['wanderlog-changes'] !== 1) throw new Error("That isn't a Wanderlog changes block.");
+  return data;
+}
+
+// Work out the changes on a copy of the trip, so they can be previewed first.
+function planChanges(data) {
+  const draft = migrate(JSON.parse(JSON.stringify(state)));
+  const lines = [];
+  const real = state;
+  state = draft; // the helpers below work on `state`
+  try {
+    (Array.isArray(data.stops) ? data.stops : []).slice(0, 50).forEach((c) => {
+      if (!c || typeof c !== 'object') return;
+      const name = str(c.find).trim().toLowerCase();
+      const matches = sortedStops().filter((s) => s.name.toLowerCase() === name && (!c.arrivedOn || s.arrive === c.arrivedOn));
+      const s = matches[Math.max(0, Math.round(num(c.nth)) - 1)] ?? matches[0];
+      if (!s) { lines.push(`Skipped: no stop called "${str(c.find)}"`); return; }
+      const was = `${fmtDate(s.arrive)} → ${fmtDate(s.depart)}`;
+      const [oldArrive, oldDepart] = [s.arrive, s.depart];
+      if (isDayStr(c.arrive)) s.arrive = c.arrive;
+      if (isDayStr(c.depart)) s.depart = c.depart;
+      if (s.depart < s.arrive) {
+        lines.push(`Skipped ${s.name}: depart would be before arrive`);
+        [s.arrive, s.depart] = [oldArrive, oldDepart];
+        return;
+      }
+      if (STOP_STATUSES.includes(c.status) && c.status !== 'idea') s.status = c.status;
+      let note = '';
+      if (c.shiftLater && s.depart !== oldDepart) {
+        const delta = daysBetween(oldDepart, s.depart);
+        shiftStopsAfter(oldDepart, delta, s.id);
+        note = ` (later stops move ${Math.abs(delta)} day${Math.abs(delta) === 1 ? '' : 's'} ${delta < 0 ? 'earlier' : 'later'})`;
+      }
+      const now = `${fmtDate(s.arrive)} → ${fmtDate(s.depart)}`;
+      if (now !== was || c.status) lines.push(`${s.name}: ${was} becomes ${now}${c.status ? ` · ${s.status}` : ''}${note}`);
+    });
+
+    if (typeof data.asiaRoute === 'string') {
+      const preset = ASIA_PRESETS.find((p) => p.name.toLowerCase() === data.asiaRoute.toLowerCase());
+      const first = asiaStops()[0];
+      if (!preset) lines.push(`Skipped: no Asia route called "${data.asiaRoute}"`);
+      else if (!first) lines.push('Skipped the Asia route: there are no Asia stops to start from');
+      else {
+        const start = isDayStr(data.asiaStart) ? data.asiaStart : first.arrive;
+        state.asiaPlan = {
+          start, end: state.trip.end,
+          stops: preset.stops.map(([n, nights]) => { const p = placeInfo(n); return { name: p.name, country: p.country, lat: p.lat, lng: p.lng, nights }; }),
+        };
+        fitPlan();
+        const sig = () => JSON.stringify(asiaStops().map((s) => [s.name, s.arrive, s.depart]));
+        const beforeAsia = sig();
+        placePlanOnTrip(state.asiaPlan.stops, start);
+        const countries = [...new Set(state.asiaPlan.stops.map((p) => p.country))].join(', ');
+        lines.push(sig() === beforeAsia ? `Already set: "${preset.name}" Asia route`
+          : `Asia: "${preset.name}" route, ${state.asiaPlan.stops.length} stops from ${fmtDate(start)} to ${fmtDate(state.trip.end)} (${countries})`);
+      }
+    }
+
+    if (data.budget != null && num(data.budget) > 0) {
+      const was = state.money.budget;
+      state.money.budget = Math.round(num(data.budget));
+      lines.push(was === state.money.budget ? `Already set: budget ${usd(was)}` : `Budget: ${usd(state.money.budget)}`);
+    }
+    (Array.isArray(data.extras) ? data.extras : []).slice(0, 50).forEach((x) => {
+      const name = str(x?.name).trim().slice(0, 80);
+      if (!name || !(num(x.usd) >= 0)) return;
+      if (state.money.extras.some((y) => y.name.toLowerCase() === name.toLowerCase())) { lines.push(`Already listed: ${name}`); return; }
+      state.money.extras.push({ id: uid(), name, usd: Math.round(num(x.usd) * 100) / 100 });
+      lines.push(`One-off cost: ${name} ${usd(num(x.usd))}`);
+    });
+    (Array.isArray(data.expenses) ? data.expenses : []).slice(0, 200).forEach((e) => {
+      const amount = num(e?.amount);
+      const currency = /^[A-Z]{3}$/.test(str(e?.currency)) ? e.currency : 'USD';
+      const rate = rateFor(currency);
+      if (!(amount > 0) || !rate) return;
+      const date = isDayStr(e.date) ? e.date : toISO(today());
+      const note = str(e.note).slice(0, 200);
+      if (state.money.expenses.some((x) => x.date === date && x.amount === amount && x.note === note)) { lines.push(`Already logged: ${note || 'expense'} on ${fmtDate(date)}`); return; }
+      state.money.expenses.push({
+        id: uid(), date, amount, currency, usd: Math.round((amount / rate) * 100) / 100,
+        category: Object.hasOwn(EXPENSE_CATS, e.category) ? e.category : 'other', stopId: '', note,
+      });
+      lines.push(`Spent: ${note || EXPENSE_CATS[e.category] || 'expense'} · ${amount.toLocaleString('en-US')} ${currency} on ${fmtDate(date)}`);
+    });
+  } finally {
+    state = real;
+  }
+  return { draft, lines };
+}
+
+const changesDialog = $('#changes-dialog');
+let pendingChanges = null;
+$('#btn-changes').addEventListener('click', () => {
+  setMenu(false);
+  $('#changes-text').value = '';
+  $('#changes-preview').innerHTML = '';
+  $('#btn-changes-apply').hidden = true;
+  showError('#changes-error', '');
+  pendingChanges = null;
+  changesDialog.showModal();
+});
+$('#btn-changes-close').addEventListener('click', () => changesDialog.close());
+$('#btn-changes-preview').addEventListener('click', () => {
+  showError('#changes-error', '');
+  try {
+    if (isLocked()) throw new Error('Unlock your trip first.');
+    pendingChanges = planChanges(parseChanges($('#changes-text').value));
+    const { lines } = pendingChanges;
+    $('#changes-preview').innerHTML = lines.length
+      ? `<p class="muted">This will change:</p><ul>${lines.map((l) => `<li>${escapeHTML(l)}</li>`).join('')}</ul>`
+      : '<p class="muted">Nothing to change: it all matches already.</p>';
+    $('#btn-changes-apply').hidden = !lines.some((l) => !/^(Skipped|Already)/.test(l));
+  } catch (err) {
+    pendingChanges = null;
+    $('#btn-changes-apply').hidden = true;
+    $('#changes-preview').innerHTML = '';
+    showError('#changes-error', err.message);
+  }
+});
+$('#btn-changes-apply').addEventListener('click', () => {
+  if (!pendingChanges) return;
+  state = pendingChanges.draft;
+  pendingChanges = null;
+  save();
+  render(true);
+  changesDialog.close();
+});

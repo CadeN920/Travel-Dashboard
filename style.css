@@ -1022,3 +1022,7 @@ button .i { margin-right: 2px; }
 .extra { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: .9rem; border-bottom: 1px solid rgba(255, 255, 255, .04); }
 .extras-form { display: grid; grid-template-columns: 1fr 96px auto; gap: 8px; margin-top: 10px; }
 .extras-form input { min-width: 0; }
+#changes-text { width: 100%; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .8rem; resize: vertical; }
+.changes-preview ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: .88rem; }
+.changes-preview p { margin: 0; }
+.readonly #btn-changes { display: none; }
