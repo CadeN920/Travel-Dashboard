@@ -3433,9 +3433,9 @@ $('#btn-install-close').addEventListener('click', () => installDialog.close());
 // {"wanderlog-changes": 1,
 //  "stops": [{"find": "Italy", "depart": "2027-03-02", "shiftLater": true}],
 //  "asiaRoute": "Your plan",
-//  "budget": 12000,
+//  "budget": 10000,
 //  "extras": [{"name": "Visas", "usd": 60}],
-//  "expenses": [{"date": "2027-01-06", "amount": 459.8, "currency": "USD", "category": "travel", "note": "Flight"}]}
+//  "expenses": [{"date": "2027-01-10", "amount": 25, "currency": "EUR", "category": "food", "note": "Dinner"}]}
 
 const isDayStr = (d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(parseDate(d).getTime());
 
