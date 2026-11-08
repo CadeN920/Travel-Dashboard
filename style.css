@@ -1016,3 +1016,9 @@ button .i { margin-right: 2px; }
 }
 .plan-window label { min-width: 0; }
 .plan-window input { width: 100%; min-width: 0; }
+.extras { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.extras-head { display: flex; justify-content: space-between; font-size: .95rem; }
+.extras-list { list-style: none; margin: 6px 0 0; padding: 0; }
+.extra { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: .9rem; border-bottom: 1px solid rgba(255, 255, 255, .04); }
+.extras-form { display: grid; grid-template-columns: 1fr 96px auto; gap: 8px; margin-top: 10px; }
+.extras-form input { min-width: 0; }
