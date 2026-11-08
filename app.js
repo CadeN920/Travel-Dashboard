@@ -94,7 +94,7 @@ function defaultState() {
     todoState: {},
     profile: {},
     wishlist: [],
-    money: { budget: null, expenses: [] },
+    money: { budget: null, expenses: [], extras: [] },
     asiaPlan: null,
   };
 }
@@ -105,7 +105,7 @@ function defaultState() {
 // tampered value must never be able to inject markup or script.
 const CONTINENTS = ['Europe', 'Africa', 'Asia'];
 const STOP_STATUSES = ['booked', 'tentative', 'idea'];
-const EXPENSE_CATS = { stay: 'Stays', food: 'Food & drink', local: 'Getting around', fun: 'Activities', travel: 'Travel between stops', other: 'Other' };
+const EXPENSE_CATS = { stay: 'Stays', food: 'Food & drink', local: 'Getting around', fun: 'Activities', travel: 'Travel between stops', extras: 'One-off costs', other: 'Other' };
 const BOOKING_TYPE_IDS = ['flight', 'train', 'bus', 'ferry', 'stay', 'activity'];
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const str = (v) => (v == null ? '' : String(v));
@@ -155,6 +155,10 @@ function migrate(data) {
       category: Object.hasOwn(EXPENSE_CATS, e.category) ? e.category : 'other',
       stopId: str(e.stopId),
       note: str(e.note).slice(0, 200),
+    })),
+    // One-off costs the estimate can't see (insurance, visas, gear…), in US$.
+    extras: (Array.isArray(m.extras) ? m.extras : []).filter((x) => x && typeof x === 'object').slice(0, 100).map((x) => ({
+      id: str(x.id) || uid(), name: str(x.name).slice(0, 80) || 'Cost', usd: Math.max(0, num(x.usd)),
     })),
   };
   // Asia leg planner draft.
@@ -546,7 +550,7 @@ function renderStats() {
     [new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(routeKm(stops)) + ' km', 'Distance'],
     [nights, 'Nights planned'],
     ideaStops().length && [ideaStops().length, 'Ideas to plan'],
-    !readOnly && stops.length && [usdShort(predictCost(stops).total), 'Est. trip cost'],
+    !readOnly && stops.length && [usdShort(tripEstimate().total), 'Est. trip cost'],
     fav && [escapeHTML(fav.name), 'Top rated'],
   ].filter(Boolean);
   $('#stats').innerHTML = tiles
@@ -1381,7 +1385,7 @@ const COUNTRY_COST = {
   ES: 80, PT: 70, MA: 45, IT: 95, CZ: 65, AT: 95, HU: 60, SI: 75, HR: 80, ME: 60, AL: 45,
   VN: 35, KH: 35, LA: 32, PH: 45, FR: 110, DE: 95, NL: 115, BE: 100, GR: 80, TR: 50, PL: 55,
   SK: 60, BA: 50, RS: 50, MK: 45, CH: 160, GB: 120, IE: 110, TH: 40, JP: 100, KR: 80, IN: 28,
-  ID: 40, MY: 45, SG: 120, MX: 55, US: 150,
+  ID: 40, MY: 45, SG: 120, MX: 55, US: 150, CN: 55,
 };
 const REGION_COST = { Europe: 85, Africa: 45, Asia: 40 };
 const EURO_ZONE = ['AT', 'BE', 'HR', 'CY', 'EE', 'FI', 'FR', 'DE', 'GR', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL',
@@ -1389,13 +1393,13 @@ const EURO_ZONE = ['AT', 'BE', 'HR', 'CY', 'EE', 'FI', 'FR', 'DE', 'GR', 'IE', '
 const COUNTRY_CURRENCY = {
   MA: 'MAD', CZ: 'CZK', HU: 'HUF', AL: 'ALL', VN: 'VND', KH: 'USD', LA: 'LAK', PH: 'PHP', TR: 'TRY',
   PL: 'PLN', BA: 'BAM', RS: 'RSD', MK: 'MKD', CH: 'CHF', GB: 'GBP', TH: 'THB', JP: 'JPY', KR: 'KRW',
-  IN: 'INR', ID: 'IDR', MY: 'MYR', SG: 'SGD', MX: 'MXN', US: 'USD', CA: 'CAD',
+  IN: 'INR', ID: 'IDR', MY: 'MYR', SG: 'SGD', MX: 'MXN', US: 'USD', CA: 'CAD', CN: 'CNY',
 };
 // Approximate units per US$, used only until live rates have loaded once.
 const FALLBACK_RATES = {
   USD: 1, EUR: 0.92, MAD: 10, CZK: 23, HUF: 360, ALL: 93, VND: 25400, KHR: 4100, LAK: 21500, PHP: 57,
   TRY: 34, PLN: 4, BAM: 1.8, RSD: 108, MKD: 57, CHF: 0.88, GBP: 0.78, THB: 35, JPY: 150, KRW: 1370,
-  INR: 84, IDR: 15800, MYR: 4.5, SGD: 1.35, MXN: 18, CAD: 1.37,
+  INR: 84, IDR: 15800, MYR: 4.5, SGD: 1.35, MXN: 18, CAD: 1.37, CNY: 7.2,
 };
 const DAILY_SPLIT = { stay: 0.42, food: 0.3, local: 0.1, fun: 0.18 };
 const usd = (n) => `$${Math.round(n).toLocaleString('en-US')}`;
@@ -1437,6 +1441,17 @@ function predictCost(stops, from = state.trip.home, backTo = state.trip.home) {
   return { rows, byCat, total: Object.values(byCat).reduce((a, b) => a + b, 0) };
 }
 
+// The whole-trip estimate: stops and travel, plus your one-off costs.
+function tripEstimate() {
+  const est = predictCost(sortedStops());
+  const extras = state.money.extras.reduce((n, x) => n + x.usd, 0);
+  if (extras) {
+    est.byCat.extras = extras;
+    est.total += extras;
+  }
+  return est;
+}
+
 const RATES_KEY = 'wanderlog-rates';
 let liveRates = null;
 try { liveRates = JSON.parse(localStorage.getItem(RATES_KEY))?.rates ? JSON.parse(localStorage.getItem(RATES_KEY)) : null; } catch { liveRates = null; }
@@ -1459,7 +1474,7 @@ const expenseStop = (e) => state.stops.find((s) => s.id === e.stopId) ?? stopOnD
 
 function renderBudget() {
   if (readOnly) return;
-  const pred = predictCost(sortedStops());
+  const pred = tripEstimate();
   const { money } = state;
   const budget = money.budget ?? Math.round(pred.total);
   const spent = money.expenses.reduce((n, e) => n + e.usd, 0);
@@ -1556,7 +1571,40 @@ function finishBudgetForm(t) {
   if (!form.currency.dataset.manual) setExpenseDate(form.date.value);
   $('#budget-sql-note').hidden = !(user && !vault.key && serverVersion < 3);
   updateExpensePreview();
+  renderExtras();
 }
+
+function renderExtras() {
+  const { extras } = state.money;
+  $('#extras-total').textContent = extras.length ? usd(extras.reduce((n, x) => n + x.usd, 0)) : '';
+  const list = $('#extras-list');
+  const key = JSON.stringify(extras);
+  if (list.dataset.key === key) return;
+  list.dataset.key = key;
+  list.innerHTML = '';
+  extras.forEach((x) => {
+    const li = document.createElement('li');
+    li.className = 'extra';
+    li.innerHTML = `<span>${escapeHTML(x.name)}</span><span class="exp-amt">${usd(x.usd)}<button type="button" class="task-x" aria-label="Remove">×</button></span>`;
+    li.querySelector('.task-x').addEventListener('click', () => {
+      state.money.extras = state.money.extras.filter((y) => y.id !== x.id);
+      save();
+      render();
+    });
+    list.appendChild(li);
+  });
+}
+$('#extras-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const f = e.target.elements;
+  const amount = num(f.usd.value);
+  if (!f.name.value.trim() || !(amount >= 0)) return;
+  state.money.extras.push({ id: uid(), name: f.name.value.trim().slice(0, 80), usd: Math.round(amount * 100) / 100 });
+  f.name.value = '';
+  f.usd.value = '';
+  save();
+  render();
+});
 
 function setExpenseDate(day) {
   const form = $('#expense-form').elements;
@@ -1610,21 +1658,37 @@ $('#budget-input').addEventListener('change', (e) => {
 // travel and cost add up, then put the one you like on the trip.
 
 const ASIA_PLACES = {
+  China: [['Chengdu', 30.5728, 104.0668, 'Giant pandas, Sichuan food, teahouses'],
+    ['Kunming', 25.0389, 102.7183, '"Spring City", Stone Forest, train to Laos'],
+    ['Dali', 25.6065, 100.2676, 'Old town by Erhai Lake, cycling'],
+    ['Lijiang', 26.8721, 100.2299, 'Old town, Tiger Leaping Gorge hikes'],
+    ['Yangshuo', 24.7781, 110.4964, 'Li River karst scenery, cycling, rafting'],
+    ['Shanghai', 31.2304, 121.4737, 'The Bund, food, big-city energy'],
+    ['Beijing', 39.9042, 116.4074, 'Great Wall, Forbidden City']],
+  Thailand: [['Bangkok', 13.7563, 100.5018, 'Temples, street food, markets, rooftop views'],
+    ['Chiang Mai', 18.7883, 98.9853, 'Old-city temples, night markets, cooking classes'],
+    ['Chiang Rai', 19.9105, 99.8406, 'White Temple, gateway to the Laos border'],
+    ['Chiang Khong', 20.2614, 100.4044, 'Mekong border town; cross to Huay Xai'],
+    ['Koh Samui', 9.512, 100.0136, 'Gulf island beaches'],
+    ['Koh Tao', 10.0956, 99.8404, 'Snorkeling and diving']],
   Vietnam: [['Ho Chi Minh City', 10.7769, 106.7009, 'Street food, Cu Chi tunnels, Mekong Delta day trips'],
     ['Da Lat', 11.9404, 108.4583, 'Cool highlands, waterfalls, canyoning'],
     ['Hoi An', 15.8801, 108.338, 'Lantern-lit old town, tailors, beaches by bike'],
     ['Hue', 16.4637, 107.5909, 'Imperial citadel and royal tombs'],
     ['Ninh Binh', 20.2506, 105.9745, 'River boat rides through karst cliffs'],
     ['Hanoi', 21.0278, 105.8342, 'Old Quarter, egg coffee, base for Ha Long'],
-    ['Ha Long Bay', 20.9101, 107.1839, 'Overnight boat among limestone islands']],
-  Cambodia: [['Phnom Penh', 11.5564, 104.9282, 'Royal Palace, history museums, riverside'],
+    ['Ha Long Bay', 20.9101, 107.1839, 'Overnight boat among limestone islands'],
+    ['Sapa', 22.3364, 103.8438, 'Rice terraces and mountain treks']],
+  Cambodia: [['Stung Treng', 13.5259, 105.9683, 'Mekong town by the Laos border'],
+    ['Phnom Penh', 11.5564, 104.9282, 'Royal Palace, history museums, riverside'],
     ['Siem Reap', 13.3633, 103.8564, 'Angkor Wat temples at sunrise'],
     ['Kampot', 10.6104, 104.1815, 'Riverside town, pepper farms, Bokor mountain'],
     ['Koh Rong', 10.7105, 103.2394, 'Island beaches, glowing plankton at night']],
-  Laos: [['Luang Prabang', 19.8856, 102.1347, 'Temples, Kuang Si waterfalls, night market'],
+  Laos: [['Huay Xai', 20.2763, 100.4128, 'Border town; slow boat down the Mekong'],
+    ['Luang Prabang', 19.8856, 102.1347, 'Temples, Kuang Si waterfalls, night market'],
     ['Vang Vieng', 18.9235, 102.4478, 'Tubing, caves, hot-air balloons'],
     ['Vientiane', 17.9757, 102.6331, 'Laid-back capital, Mekong sunsets'],
-    ['4000 Islands', 13.9661, 105.9203, 'River islands, hammocks, Mekong falls']],
+    ['Si Phan Don', 13.9661, 105.9203, '"4000 Islands": hammocks, cycling, Mekong falls']],
   Philippines: [['Manila', 14.5995, 120.9842, 'Intramuros, food scene, main flight hub'],
     ['El Nido', 11.1956, 119.4075, 'Island-hopping, lagoons, beaches'],
     ['Coron', 11.9986, 120.2043, 'Shipwreck snorkeling, Kayangan Lake'],
@@ -1640,15 +1704,21 @@ const placeInfo = (name) => {
   return null;
 };
 const ASIA_SEASON = {
+  Thailand: 'April is the hottest month. Songkran, the Thai New Year water festival (Apr 13–15), is a huge nationwide party: expect water fights everywhere, closures and packed transport, so book rooms and buses ahead.',
+  China: 'Spring is mild and pleasant in Yunnan and Sichuan. Avoid the May Day holiday (May 1–5), when trains and sights are packed. US passport holders can usually visit visa-free for up to 10 days when passing through to a third country (for example arriving from Europe and leaving for Laos), within approved regions and ports. Check the current rules before booking.',
   Vietnam: 'April–May is dry and hot in the center (Hoi An, Hue), which is great beach time. The north is pleasant in April and humid by May; the south\'s rains start mid-May. Apr 30 – May 1 holidays make domestic travel busy.',
   Cambodia: 'The hottest time of year (35°C+): see Angkor at sunrise and rest at midday. Khmer New Year (mid-April) brings closures and full buses. Rains begin in May.',
   Laos: 'Hot season, and March–April can be hazy from field burning in the north. Lao New Year (mid-April) is a huge water festival, especially in Luang Prabang, so book rooms ahead.',
   Philippines: 'Dry season runs through May: the best island-hopping weather, but very hot. Domestic flights and island transfers fill up, so book ahead.',
 };
 const ASIA_PRESETS = [
-  { name: 'Your outline', note: 'Vietnam → Cambodia → Laos → Philippines',
-    stops: [['Ho Chi Minh City', 3], ['Hoi An', 4], ['Hanoi', 3], ['Ha Long Bay', 1], ['Siem Reap', 3], ['Phnom Penh', 2],
-      ['Luang Prabang', 4], ['Vang Vieng', 3], ['El Nido', 6], ['Coron', 3], ['Manila', 2]] },
+  { name: 'Your plan', note: 'Thailand → overland through Laos, Cambodia, Vietnam → Philippines',
+    stops: [['Bangkok', 7], ['Chiang Khong', 2], ['Huay Xai', 1], ['Luang Prabang', 2], ['Vientiane', 1], ['Si Phan Don', 1],
+      ['Stung Treng', 1], ['Siem Reap', 2], ['Phnom Penh', 1], ['Ho Chi Minh City', 3], ['Hoi An', 4], ['Hanoi', 3],
+      ['Manila', 2], ['El Nido', 8]] },
+  { name: 'China first', note: 'China → train to Laos → Cambodia → Vietnam → Philippines',
+    stops: [['Chengdu', 3], ['Kunming', 2], ['Dali', 3], ['Luang Prabang', 4], ['Vang Vieng', 3], ['Siem Reap', 3], ['Phnom Penh', 2],
+      ['Ho Chi Minh City', 3], ['Hoi An', 4], ['Hanoi', 3], ['El Nido', 5], ['Coron', 3], ['Manila', 2]] },
   { name: 'Slower pace', note: 'Fewer moves, longer stays',
     stops: [['Ho Chi Minh City', 4], ['Hoi An', 6], ['Siem Reap', 4], ['Luang Prabang', 6], ['El Nido', 8], ['Manila', 3]] },
   { name: 'More island time', note: 'Shorter mainland, longer Philippines',
@@ -1672,8 +1742,16 @@ function currentPlan() {
   }
   return state.asiaPlan;
 }
+const RAIL_LAOS = ['Luang Prabang', 'Vang Vieng', 'Vientiane'];
 function planMode(a, b) {
-  if (a.country === b.country && a.country === 'Laos') return 'Train';
+  const pair = [a.name, b.name].sort().join('|');
+  if (pair === 'Huay Xai|Luang Prabang') return 'Ferry'; // the two-day Mekong slow boat
+  // China's high-speed rail and the China–Laos railway (Kunming ↔ Luang Prabang ↔ Vientiane).
+  const rail = (x) => x.country === 'China' || RAIL_LAOS.includes(x.name);
+  if (rail(a) && rail(b) && haversine(a, b) < 1500) return 'Train';
+  // Neighboring countries on the mainland are usually crossed overland.
+  const mainland = ['Thailand', 'Laos', 'Cambodia', 'Vietnam'];
+  if (a.country !== b.country && mainland.includes(a.country) && mainland.includes(b.country) && haversine(a, b) < 700) return 'Bus';
   if (a.country === b.country && a.country === 'Philippines') return haversine(a, b) > 150 ? 'Plane' : 'Ferry';
   return a.country !== b.country || haversine(a, b) > 450 ? 'Plane' : 'Bus';
 }
@@ -2407,6 +2485,9 @@ function openStopDialog(stop, preset = {}) {
   }
   setStars(data.rating || 0);
   syncDateFields();
+  // Shortening or lengthening a stop can push the rest of the trip along with it.
+  $('#shift-later-row').hidden = !(stop && !isIdea(stop) && sortedStops().some((s) => s.id !== stop.id && s.arrive >= stop.depart));
+  stopForm.elements.shiftLater.checked = true;
   stopDialog.showModal();
   if (!stop && preset.lat == null) $('#place-search').focus();
 }
@@ -2469,6 +2550,17 @@ stopForm.addEventListener('submit', (e) => {
     countryCode: f.countryCode.value,
   };
   const idx = state.stops.findIndex((s) => s.id === stop.id);
+  const before = idx >= 0 ? state.stops[idx] : null;
+  if (before && !isIdea(before) && !idea && !$('#shift-later-row').hidden && f.shiftLater.checked) {
+    const delta = daysBetween(before.depart, stop.depart);
+    if (delta) {
+      state.stops.forEach((s) => {
+        if (s.id === stop.id || isIdea(s) || s.arrive < before.depart) return;
+        s.arrive = toISO(addDays(parseDate(s.arrive), delta));
+        s.depart = toISO(addDays(parseDate(s.depart), delta));
+      });
+    }
+  }
   if (idx >= 0) state.stops[idx] = stop;
   else state.stops.push(stop);
   save();

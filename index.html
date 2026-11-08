@@ -207,6 +207,20 @@
         <div id="budget-estimate" class="big-number"></div>
         <p id="budget-style" class="muted small-print"></p>
         <div id="budget-cats" class="bars"></div>
+        <div class="extras">
+          <div class="extras-head"><strong>One-off costs</strong> <span id="extras-total" class="muted"></span></div>
+          <p class="muted small-print">Things the estimate can't see, like travel insurance, visas, gear or shipping luggage home.</p>
+          <ul id="extras-list" class="extras-list"></ul>
+          <form id="extras-form" class="extras-form" autocomplete="off">
+            <input name="name" list="extras-ideas" maxlength="80" required placeholder="e.g. Travel insurance" aria-label="What" />
+            <input name="usd" type="number" inputmode="decimal" min="0" step="any" required placeholder="US$" aria-label="Amount in US dollars" />
+            <button type="submit" class="small">Add</button>
+          </form>
+          <datalist id="extras-ideas">
+            <option>Travel insurance</option><option>Visas</option><option>Gear and packing</option>
+            <option>Shipping luggage home</option><option>Buffer</option>
+          </datalist>
+        </div>
       </section>
     </div>
 
@@ -222,6 +236,7 @@
             <option value="local">Getting around</option>
             <option value="fun">Activities</option>
             <option value="travel">Travel between stops</option>
+            <option value="extras">One-off costs</option>
             <option value="other">Other</option>
           </select>
         </label>
@@ -256,7 +271,7 @@
       <div>
         <button class="link back-link" data-goto="trip">← Trip</button>
         <h2>Asia leg planner</h2>
-        <p class="muted">Try routes for Vietnam, Cambodia, Laos and the Philippines, then put the one you like on your trip.</p>
+        <p class="muted">Try routes through Thailand, Laos, Cambodia, Vietnam, the Philippines and China, then put the one you like on your trip.</p>
       </div>
     </div>
 
@@ -435,6 +450,7 @@
         <label>Leg <input name="leg" placeholder="e.g. Leg 2 · Balkans" /></label>
         <label class="date-field">Arrive <input name="arrive" type="date" required /></label>
         <label class="date-field">Depart <input name="depart" type="date" required /></label>
+        <label class="check shift-later" id="shift-later-row" hidden><input type="checkbox" name="shiftLater" checked /> If the depart date changes, move the later stops by the same number of days</label>
         <label>Region
           <select name="continent">
             <option>Europe</option>
